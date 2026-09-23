@@ -282,8 +282,18 @@ def list_users(db: Session = Depends(get_db), _: User = Depends(require_admin)):
     return db.query(User).all()
 
 
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=8, max_length=128)
+    email: Optional[str] = None
+    display_name: Optional[str] = None
+    role: str = "viewer"
+
+
 @app.post("/api/users", response_model=UserOut)
-def create_user(body: SetupRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    if body.role not in _VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
     if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
     user = User(
@@ -292,12 +302,29 @@ def create_user(body: SetupRequest, db: Session = Depends(get_db), _: User = Dep
         display_name=body.display_name or body.username,
         hashed_password=hash_password(body.password),
         auth_type="local",
-        role="viewer",
+        role=body.role,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+@app.patch("/api/users/{user_id}/active")
+def set_user_active(
+    user_id: str,
+    active: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id and not active:
+        raise HTTPException(status_code=400, detail="Cannot disable your own account")
+    user.is_active = active
+    db.commit()
+    return {"ok": True}
 
 
 @app.patch("/api/users/{user_id}/role")

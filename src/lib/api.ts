@@ -180,8 +180,24 @@ export function useUsers() {
   return { users: s.data, loading: s.loading, error: s.error, reload: s.reload };
 }
 
+export interface NewUser {
+  username: string;
+  password: string;
+  email?: string;
+  display_name?: string;
+  role: string;
+}
+
+export function createUser(body: NewUser) {
+  return apiSend<ApiUser>("/api/users", "POST", body);
+}
+
 export function updateUserRole(id: string, role: string) {
   return apiSend(`/api/users/${id}/role?role=${encodeURIComponent(role)}`, "PATCH");
+}
+
+export function setUserActive(id: string, active: boolean) {
+  return apiSend(`/api/users/${id}/active?active=${active}`, "PATCH");
 }
 
 export function deleteUser(id: string) {

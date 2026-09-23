@@ -6,7 +6,18 @@ import {
   useApplications,
   useGroupMappings,
   updateGroupMapping,
+  createUser,
+  updateUserRole,
+  setUserActive,
+  deleteUser,
 } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -163,9 +174,68 @@ export default function RolesPage() {
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
 
   // Live data
-  const { users } = useUsers();
+  const { users, reload: reloadUsers } = useUsers();
   const { applications } = useApplications();
   const { mappings, reload: reloadMappings } = useGroupMappings();
+
+  // Add-user dialog
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [newUser, setNewUser] = useState({
+    username: "",
+    display_name: "",
+    email: "",
+    password: "",
+    role: "viewer",
+  });
+  const [savingUser, setSavingUser] = useState(false);
+  const [userError, setUserError] = useState("");
+
+  // Manage-user dialog (change role / enable-disable / delete)
+  const [manageUser, setManageUser] = useState<User | null>(null);
+
+  const ROLE_VALUES = ["admin", "security_engineer", "developer", "viewer"];
+
+  async function handleCreateUser() {
+    if (newUser.username.length < 3 || newUser.password.length < 8) {
+      setUserError("Username min 3 chars, password min 8 chars.");
+      return;
+    }
+    setSavingUser(true);
+    setUserError("");
+    try {
+      await createUser({
+        username: newUser.username.trim(),
+        password: newUser.password,
+        email: newUser.email.trim() || undefined,
+        display_name: newUser.display_name.trim() || undefined,
+        role: newUser.role,
+      });
+      setAddUserOpen(false);
+      setNewUser({ username: "", display_name: "", email: "", password: "", role: "viewer" });
+      reloadUsers();
+    } catch (e) {
+      setUserError(e instanceof Error ? e.message : "Failed to create user");
+    } finally {
+      setSavingUser(false);
+    }
+  }
+
+  async function handleChangeRole(userId: string, role: string) {
+    await updateUserRole(userId, role);
+    reloadUsers();
+  }
+
+  async function handleToggleActive(userId: string, active: boolean) {
+    await setUserActive(userId, active);
+    setManageUser(null);
+    reloadUsers();
+  }
+
+  async function handleDeleteUser(userId: string) {
+    await deleteUser(userId);
+    setManageUser(null);
+    reloadUsers();
+  }
 
   const availableApps = useMemo(
     () => applications.map((a) => a.name),
@@ -282,12 +352,12 @@ export default function RolesPage() {
           <>
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">
-                {mockRoles.length} roles configured
+                {mockRoles.length} system roles · assign them to users in the Users tab
               </p>
-              <button className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-                <Plus className="h-4 w-4" />
-                New Role
-              </button>
+              <span className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 text-sm font-medium rounded-lg">
+                <Shield className="h-4 w-4" />
+                System-defined
+              </span>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -546,11 +616,14 @@ export default function RolesPage() {
           <>
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">
-                {mockUsers.length} users synced from Active Directory
+                {mockUsers.length} user{mockUsers.length !== 1 ? "s" : ""} · local &amp; Active Directory
               </p>
-              <button className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+              <button
+                onClick={() => setAddUserOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+              >
                 <Plus className="h-4 w-4" />
-                Assign User
+                Add User
               </button>
             </div>
 
@@ -595,7 +668,11 @@ export default function RolesPage() {
                       <span className="text-xs text-slate-400">
                         {new Date(user.lastLogin).toLocaleDateString()}
                       </span>
-                      <button className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+                      <button
+                        onClick={() => setManageUser(user)}
+                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                        title="Manage user"
+                      >
                         <Pencil className="h-3.5 w-3.5 text-slate-400" />
                       </button>
                     </div>
@@ -606,6 +683,154 @@ export default function RolesPage() {
           </>
         )}
       </div>
+
+      {/* Add User dialog */}
+      <Dialog open={addUserOpen} onOpenChange={setAddUserOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-slate-800">
+              Add Local User
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-slate-600">Username</Label>
+              <Input
+                value={newUser.username}
+                onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                placeholder="jane.doe"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-slate-600">Display name</Label>
+                <Input
+                  value={newUser.display_name}
+                  onChange={(e) => setNewUser({ ...newUser, display_name: e.target.value })}
+                  placeholder="Jane Doe"
+                  className="border-slate-200"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-slate-600">Role</Label>
+                <Select value={newUser.role} onValueChange={(v) => setNewUser({ ...newUser, role: v ?? "viewer" })}>
+                  <SelectTrigger className="border-slate-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROLE_VALUES.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {ROLE_DISPLAY[r]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-slate-600">Email (optional)</Label>
+              <Input
+                value={newUser.email}
+                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                placeholder="jane.doe@maybank.com"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-slate-600">Password</Label>
+              <Input
+                type="password"
+                value={newUser.password}
+                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                placeholder="Min 8 characters"
+                className="border-slate-200"
+              />
+            </div>
+            {userError && (
+              <div className="p-2.5 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">
+                {userError}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setAddUserOpen(false)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 text-sm font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateUser}
+                disabled={savingUser}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                {savingUser ? "Creating..." : "Create User"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage User dialog */}
+      <Dialog open={!!manageUser} onOpenChange={(o) => !o && setManageUser(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-slate-800">
+              {manageUser?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {manageUser && (
+            <div className="space-y-4 mt-2">
+              <p className="text-xs text-slate-400">
+                {manageUser.username}
+                {manageUser.email ? ` · ${manageUser.email}` : ""}
+              </p>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-slate-600">Role</Label>
+                <Select
+                  value={
+                    ROLE_VALUES.find((r) => ROLE_DISPLAY[r] === manageUser.role) ?? "viewer"
+                  }
+                  onValueChange={(v) => {
+                    if (v) {
+                      handleChangeRole(manageUser.id, v);
+                      setManageUser({ ...manageUser, role: ROLE_DISPLAY[v] });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="border-slate-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROLE_VALUES.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {ROLE_DISPLAY[r]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <button
+                  onClick={() =>
+                    handleToggleActive(manageUser.id, manageUser.status !== "active")
+                  }
+                  className="px-3 py-2 text-sm font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  {manageUser.status === "active" ? "Disable account" : "Enable account"}
+                </button>
+                <button
+                  onClick={() => handleDeleteUser(manageUser.id)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete user
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Role detail dialog */}
       <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
