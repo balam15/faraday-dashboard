@@ -1,4 +1,4 @@
-# Deploying Faraday Dashboard (Podman)
+# Deploying Faraday Dashboard (Docker, no compose)
 
 The app ships as a single image that runs the Next.js frontend and the FastAPI
 backend together (via supervisord). Data is stored in Postgres, with a SQLite
@@ -7,22 +7,22 @@ fallback for quick trials.
 ## Build
 
 ```sh
-podman build -t faraday .
+docker build -t faraday .
 ```
 
 ## Run
 
 ```sh
-./scripts/podman-run.sh
+./scripts/docker-run.sh
 ```
 
-This creates a `faraday` pod with Postgres + the app and publishes
+This creates a `faraday-net` network with Postgres + the app and publishes
 <http://localhost:3000>. On first visit you'll be sent to `/setup` to create the
 admin account.
 
 Options:
 
-- `USE_SQLITE=1 ./scripts/podman-run.sh` — skip Postgres, use the bundled SQLite
+- `USE_SQLITE=1 ./scripts/docker-run.sh` — skip Postgres, use the bundled SQLite
   DB in the `faraday-appdata` volume (fine for a demo; use Postgres for real use).
 - `POSTGRES_PASSWORD=...` — set the DB password (default `faraday`).
 - `SECRET_KEY=...` — JWT signing key. If unset, a random key is generated once
@@ -30,24 +30,31 @@ Options:
 - `COOKIE_SECURE=true` — set when serving over HTTPS so the session cookie is
   marked `Secure`.
 
-### Manual Podman (without the script)
+### Manual Docker (without the script)
 
 ```sh
-podman pod create --name faraday -p 3000:3000
+docker network create faraday-net
 
-podman run -d --pod faraday --name faraday-db \
+docker run -d --name faraday-db --network faraday-net \
   -e POSTGRES_USER=faraday -e POSTGRES_PASSWORD=faraday -e POSTGRES_DB=faraday \
   -v faraday-pgdata:/var/lib/postgresql/data \
-  docker.io/library/postgres:16-alpine
+  postgres:16-alpine
 
-podman run -d --pod faraday --name faraday-app \
-  -e DATABASE_URL="postgresql+psycopg://faraday:faraday@127.0.0.1:5432/faraday" \
+docker run -d --name faraday-app --network faraday-net -p 3000:3000 \
+  -e DATABASE_URL="postgresql+psycopg://faraday:faraday@faraday-db:5432/faraday" \
   -v faraday-appdata:/data \
   faraday
 ```
 
-Database migrations (Alembic) run automatically at container start, retrying
-until Postgres is reachable.
+The app reaches Postgres by container name (`faraday-db`) over the shared
+network. Database migrations (Alembic) run automatically at container start,
+retrying until Postgres is reachable — so start order doesn't matter.
+
+### SQLite only (single container, no database server)
+
+```sh
+docker run -d --name faraday-app -p 3000:3000 -v faraday-appdata:/data faraday
+```
 
 ## Importing scans
 
