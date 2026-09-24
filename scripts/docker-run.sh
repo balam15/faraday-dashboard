@@ -24,6 +24,7 @@ if [ "$USE_SQLITE" = "1" ]; then
   echo "Starting app with bundled SQLite..."
   docker run -d --name faraday-app --network "$NET" -p 3000:3000 \
     -e SECRET_KEY="$SECRET_KEY" \
+    -e COOKIE_SECURE="${COOKIE_SECURE:-false}" \
     -v faraday-appdata:/data \
     "$IMAGE"
 else
@@ -41,6 +42,7 @@ else
   docker run -d --name faraday-app --network "$NET" -p 3000:3000 \
     -e DATABASE_URL="postgresql+psycopg://faraday:${PG_PASSWORD}@faraday-db:5432/faraday" \
     -e SECRET_KEY="$SECRET_KEY" \
+    -e COOKIE_SECURE="${COOKIE_SECURE:-false}" \
     -v faraday-appdata:/data \
     "$IMAGE"
 fi
