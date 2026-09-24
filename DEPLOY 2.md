@@ -4,34 +4,31 @@ The app ships as a single image that runs the Next.js frontend and the FastAPI
 backend together (via supervisord). Data is stored in Postgres, with a SQLite
 fallback for quick trials.
 
+## Build
+
+```sh
+docker build -t faraday .
+```
+
 ## Run
 
 ```sh
-./start.sh --build     # build the image and start Postgres + the app
+./scripts/docker-run.sh
 ```
 
-Afterwards just `./start.sh` (it rebuilds only if the image is missing). This
-creates a `faraday-net` network with Postgres + the app and publishes
+This creates a `faraday-net` network with Postgres + the app and publishes
 <http://localhost:3000>. On first visit you'll be sent to `/setup` to create the
 admin account.
 
-Stop it with:
+Options:
 
-```sh
-./stop.sh              # stop containers, keep the data
-./stop.sh --purge      # also delete the data volumes (destroys everything)
-```
-
-Options (env vars for `start.sh`):
-
-- `PORT=8080 ./start.sh` — publish on a different host port.
-- `COOKIE_SECURE=true ./start.sh` — set when serving over HTTPS / a public
-  tunnel so the session cookie is marked `Secure`.
-- `USE_SQLITE=1 ./start.sh` — skip Postgres, use the bundled SQLite DB in the
-  `faraday-appdata` volume (fine for a quick trial; use Postgres for real use).
+- `USE_SQLITE=1 ./scripts/docker-run.sh` — skip Postgres, use the bundled SQLite
+  DB in the `faraday-appdata` volume (fine for a demo; use Postgres for real use).
 - `POSTGRES_PASSWORD=...` — set the DB password (default `faraday`).
 - `SECRET_KEY=...` — JWT signing key. If unset, a random key is generated once
   and persisted to `/data/secret_key`, so sessions survive restarts.
+- `COOKIE_SECURE=true` — set when serving over HTTPS so the session cookie is
+  marked `Secure`.
 
 ### Manual Docker (without the script)
 
