@@ -35,6 +35,11 @@ const nextConfig: NextConfig = {
         source: "/api/health",
         destination: `${backend}/api/health`,
       },
+      // FastAPI interactive API docs (Swagger UI, ReDoc, OpenAPI schema).
+      { source: "/docs", destination: `${backend}/docs` },
+      { source: "/docs/:path*", destination: `${backend}/docs/:path*` },
+      { source: "/redoc", destination: `${backend}/redoc` },
+      { source: "/openapi.json", destination: `${backend}/openapi.json` },
     ];
   },
 };
