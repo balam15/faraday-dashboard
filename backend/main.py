@@ -14,7 +14,20 @@ from auth import hash_password, verify_password, create_access_token, decode_tok
 from ldap_auth import ldap_authenticate, resolve_role_from_groups
 import permissions
 
-app = FastAPI(title="Faraday Dashboard API", version="1.0.0")
+from fastapi.openapi.docs import get_redoc_html
+
+# Disable the built-in ReDoc route so we can pin a stable CDN bundle below.
+# FastAPI's default points at redoc@next, which is frequently broken.
+app = FastAPI(title="Faraday Dashboard API", version="1.0.0", redoc_url=None)
+
+
+@app.get("/redoc", include_in_schema=False)
+def custom_redoc():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js",
+    )
 
 # The frontend reaches the API through Next.js server-side rewrites (same
 # origin), so cross-origin access is off by default. Set CORS_ORIGINS
