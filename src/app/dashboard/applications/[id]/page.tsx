@@ -23,6 +23,7 @@ import {
   Loader2,
   FileDown,
   Trash2,
+  ArrowLeft,
 } from "lucide-react";
 
 function formatDate(dateString: string) {
@@ -152,7 +153,14 @@ export default function ApplicationDetailPage() {
       />
 
       <div className="p-6 space-y-6">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <Link
+            href="/dashboard/applications"
+            className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-blue-600 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Applications
+          </Link>
           <button
             onClick={handleDeleteApp}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg transition-colors"

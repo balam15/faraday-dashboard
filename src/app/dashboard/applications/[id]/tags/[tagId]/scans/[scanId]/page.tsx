@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useState } from "react";
 import { useApplication, useScanFindings, useMe, updateFindingStatus } from "@/lib/api";
 import { Header } from "@/components/layout/header";
@@ -29,6 +30,7 @@ import {
   Info,
   ExternalLink,
   ChevronRight,
+  ArrowLeft,
 } from "lucide-react";
 import type { Finding } from "@/lib/mock-data";
 
@@ -345,6 +347,14 @@ export default function FindingsPage() {
       />
 
       <div className="p-6 space-y-4">
+        <Link
+          href={`/dashboard/applications/${appId}`}
+          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-blue-600 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to {app?.name || "application"}
+        </Link>
+
         {/* Scan summary */}
         <Card className="border-0 shadow-sm">
           <CardContent className="p-4">
