@@ -36,6 +36,8 @@ import {
   Trash2,
   Plus,
   Users,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -837,6 +839,39 @@ export default function SettingsPage() {
                   </p>
                 </CardHeader>
                 <CardContent className="px-6 pb-6 space-y-4">
+                  {/* Interactive API documentation */}
+                  <div className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">
+                        Interactive API Documentation
+                      </p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Browse and try every endpoint (OpenAPI / Swagger).
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <a
+                        href="/docs"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                      >
+                        <BookOpen className="h-4 w-4" />
+                        Swagger UI
+                        <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+                      </a>
+                      <a
+                        href="/redoc"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 hover:bg-white text-slate-700 text-sm font-medium rounded-lg transition-colors"
+                      >
+                        ReDoc
+                        <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+                      </a>
+                    </div>
+                  </div>
+
                   {createdKey && (
                     <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                       <p className="text-sm font-medium text-green-800">
