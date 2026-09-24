@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
       "system",
       "auth",
       "users",
+      "roles",
       "ldap",
       "apps",
       "scans",

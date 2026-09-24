@@ -204,6 +204,54 @@ export function deleteUser(id: string) {
   return apiSend(`/api/users/${id}`, "DELETE");
 }
 
+// ── Roles / permissions ───────────────────────────────────────────
+
+export interface ApiRole {
+  name: string;
+  description: string;
+  permissions: string[];
+  is_system: boolean;
+  user_count: number;
+}
+
+export function useRoles() {
+  const s = useAsync<{ roles: ApiRole[]; all_permissions: string[] }>(
+    () => apiGet("/api/roles"),
+    { roles: [], all_permissions: [] },
+    [],
+  );
+  return {
+    roles: s.data.roles,
+    allPermissions: s.data.all_permissions,
+    loading: s.loading,
+    reload: s.reload,
+  };
+}
+
+export function createRole(body: { name: string; description?: string; permissions: string[] }) {
+  return apiSend<ApiRole>("/api/roles", "POST", body);
+}
+
+export function updateRole(name: string, body: { description?: string; permissions?: string[] }) {
+  return apiSend<ApiRole>(`/api/roles/${name}`, "PATCH", body);
+}
+
+export function deleteRole(name: string) {
+  return apiSend(`/api/roles/${name}`, "DELETE");
+}
+
+export interface Me {
+  username: string;
+  display_name?: string;
+  role: string;
+  permissions: string[];
+}
+
+export function useMe() {
+  const s = useAsync<Me | null>(() => apiGet("/api/auth/me"), null, []);
+  return { me: s.data, loading: s.loading };
+}
+
 // ── LDAP config + group mappings (admin) ──────────────────────────
 
 export interface LdapConfig {

@@ -7,10 +7,12 @@ from typing import Optional
 from datetime import datetime
 
 from models import (
-    init_db, get_db, User, SystemConfig, LdapConfig, LdapGroupMapping
+    init_db, get_db, SessionLocal, User, SystemConfig, LdapConfig,
+    LdapGroupMapping, Role,
 )
 from auth import hash_password, verify_password, create_access_token, decode_token
 from ldap_auth import ldap_authenticate, resolve_role_from_groups
+import permissions
 
 app = FastAPI(title="Faraday Dashboard API", version="1.0.0")
 
@@ -31,6 +33,11 @@ if _cors_origins:
 @app.on_event("startup")
 def startup():
     init_db()
+    db = SessionLocal()
+    try:
+        permissions.seed_system_roles(db)
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────
@@ -86,6 +93,16 @@ def require_admin(user: User = Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+def require_permission(perm: str):
+    """Dependency factory: allow the request only if the user's role grants
+    `perm`. The admin role implicitly holds every permission."""
+    def _dep(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+        if not permissions.has_permission(db, user, perm):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {perm}")
+        return user
+    return _dep
 
 
 # ─────────────────────────────────────────────
@@ -256,7 +273,7 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
 
 
 @app.get("/api/auth/me")
-def me(current_user: User = Depends(get_current_user)):
+def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return {
         "username": current_user.username,
         "email": current_user.email,
@@ -264,6 +281,7 @@ def me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "auth_type": current_user.auth_type,
         "allowed_apps": current_user.allowed_apps,
+        "permissions": sorted(permissions.user_permissions(db, current_user)),
     }
 
 
@@ -278,7 +296,7 @@ def logout(response: Response):
 # ─────────────────────────────────────────────
 
 @app.get("/api/users", response_model=list[UserOut])
-def list_users(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def list_users(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_users"))):
     return db.query(User).all()
 
 
@@ -291,8 +309,8 @@ class UserCreate(BaseModel):
 
 
 @app.post("/api/users", response_model=UserOut)
-def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    if body.role not in _VALID_ROLES:
+def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_users"))):
+    if not permissions.role_exists(db, body.role):
         raise HTTPException(status_code=400, detail="Invalid role")
     if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -315,7 +333,7 @@ def set_user_active(
     user_id: str,
     active: bool,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("manage_users")),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -332,9 +350,9 @@ def update_user_role(
     user_id: str,
     role: str,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("manage_users")),
 ):
-    if role not in _VALID_ROLES:
+    if not permissions.role_exists(db, role):
         raise HTTPException(status_code=400, detail="Invalid role")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -348,7 +366,7 @@ def update_user_role(
 def delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("manage_users")),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -361,11 +379,100 @@ def delete_user(
 
 
 # ─────────────────────────────────────────────
+# Routes: Roles (manage_roles — only admin by default)
+# ─────────────────────────────────────────────
+
+import re as _re
+
+_ROLE_NAME_RE = _re.compile(r"^[a-z0-9_]{2,64}$")
+
+
+class RoleIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=64)
+    description: Optional[str] = ""
+    permissions: list[str] = []
+
+
+class RoleUpdate(BaseModel):
+    description: Optional[str] = None
+    permissions: Optional[list[str]] = None
+
+
+def _role_dict(db: Session, role: Role) -> dict:
+    user_count = db.query(User).filter(User.role == role.name).count()
+    return {
+        "name": role.name,
+        "description": role.description or "",
+        "permissions": role.permissions or [],
+        "is_system": bool(role.is_system),
+        "user_count": user_count,
+    }
+
+
+@app.get("/api/roles")
+def list_roles(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    # Any authenticated user may read the role list (needed to render dropdowns);
+    # role names/permissions are not sensitive.
+    rows = db.query(Role).all()
+    order = {"admin": 0, "security_engineer": 1, "developer": 2, "viewer": 3}
+    rows.sort(key=lambda r: (order.get(r.name, 99), r.name))
+    return {"roles": [_role_dict(db, r) for r in rows], "all_permissions": permissions.ALL_PERMISSIONS}
+
+
+@app.post("/api/roles")
+def create_role(body: RoleIn, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_roles"))):
+    name = body.name.strip().lower().replace(" ", "_")
+    if not _ROLE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Role name must be lowercase letters, numbers, or underscores")
+    if db.query(Role).filter(Role.name == name).first():
+        raise HTTPException(status_code=400, detail="Role already exists")
+    role = Role(
+        name=name,
+        description=(body.description or "")[:256],
+        permissions=permissions.valid_permissions(body.permissions),
+        is_system=False,
+    )
+    db.add(role)
+    db.commit()
+    return _role_dict(db, role)
+
+
+@app.patch("/api/roles/{name}")
+def update_role(name: str, body: RoleUpdate, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_roles"))):
+    role = db.query(Role).filter(Role.name == name).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if role.is_system:
+        raise HTTPException(status_code=400, detail="System roles cannot be edited")
+    if body.description is not None:
+        role.description = body.description[:256]
+    if body.permissions is not None:
+        role.permissions = permissions.valid_permissions(body.permissions)
+    db.commit()
+    return _role_dict(db, role)
+
+
+@app.delete("/api/roles/{name}")
+def delete_role(name: str, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_roles"))):
+    role = db.query(Role).filter(Role.name == name).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if role.is_system:
+        raise HTTPException(status_code=400, detail="System roles cannot be deleted")
+    in_use = db.query(User).filter(User.role == name).count()
+    if in_use:
+        raise HTTPException(status_code=400, detail=f"Role is assigned to {in_use} user(s); reassign them first")
+    db.delete(role)
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
 # Routes: LDAP Config (admin only)
 # ─────────────────────────────────────────────
 
 @app.get("/api/ldap/config")
-def get_ldap_config(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def get_ldap_config(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
     cfg = db.query(LdapConfig).filter(LdapConfig.id == 1).first()
     if not cfg:
         return {}
@@ -378,7 +485,7 @@ def get_ldap_config(db: Session = Depends(get_db), _: User = Depends(require_adm
 def save_ldap_config(
     body: LdapConfigIn,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("manage_settings")),
 ):
     cfg = db.query(LdapConfig).filter(LdapConfig.id == 1).first()
     if not cfg:
@@ -402,7 +509,7 @@ def save_ldap_config(
 
 
 @app.post("/api/ldap/test")
-def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
     from ldap_auth import get_ldap_config as _get_cfg
     from ldap3 import Server, Connection, ALL, Tls
     import ssl as _ssl
@@ -427,7 +534,7 @@ def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(requir
 # ─────────────────────────────────────────────
 
 @app.get("/api/ldap/groups")
-def list_group_mappings(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def list_group_mappings(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
     return db.query(LdapGroupMapping).all()
 
 
@@ -435,7 +542,7 @@ def list_group_mappings(db: Session = Depends(get_db), _: User = Depends(require
 def add_group_mapping(
     body: GroupMappingIn,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("manage_settings")),
 ):
     existing = db.query(LdapGroupMapping).filter(
         LdapGroupMapping.group_dn == body.group_dn
@@ -463,7 +570,7 @@ def update_group_mapping(
     mapping_id: str,
     body: GroupMappingUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("manage_settings")),
 ):
     mapping = db.query(LdapGroupMapping).filter(LdapGroupMapping.id == mapping_id).first()
     if not mapping:
@@ -482,7 +589,7 @@ def update_group_mapping(
 def delete_group_mapping(
     mapping_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_permission("manage_settings")),
 ):
     mapping = db.query(LdapGroupMapping).filter(LdapGroupMapping.id == mapping_id).first()
     if not mapping:
@@ -512,11 +619,9 @@ import ingest
 import serializers
 import api_keys
 
-# Roles allowed to import scans and triage findings.
-_IMPORT_ROLES = {"admin", "security_engineer"}
-_TRIAGE_ROLES = {"admin", "security_engineer"}
+# Capability checks are permission-based (see permissions.py); status values
+# remain a fixed enum.
 _VALID_STATUS = {"open", "mitigated", "false_positive", "accepted"}
-_VALID_ROLES = {"admin", "security_engineer", "developer", "viewer"}
 
 
 def _accessible_app_names(user: User) -> Optional[set]:
@@ -535,8 +640,10 @@ def _app_visible(user: User, app: Application) -> bool:
     return allowed is None or app.name in allowed
 
 
-def require_import(user: User = Depends(get_current_user)) -> User:
-    if user.role not in _IMPORT_ROLES:
+def require_import(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> User:
+    if not permissions.has_permission(db, user, "import_scans"):
         raise HTTPException(status_code=403, detail="You cannot import scans")
     return user
 
@@ -563,7 +670,7 @@ def get_app(app_id: str, db: Session = Depends(get_db), user: User = Depends(get
 
 
 @app.delete("/api/apps/{app_id}")
-def delete_app(app_id: str, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def delete_app(app_id: str, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_applications"))):
     app_row = db.query(Application).filter(Application.id == app_id).first()
     if not app_row:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -636,7 +743,7 @@ def update_finding_status(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.role not in _TRIAGE_ROLES:
+    if not permissions.has_permission(db, user, "manage_findings"):
         raise HTTPException(status_code=403, detail="You cannot change finding status")
     if status not in _VALID_STATUS:
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -665,7 +772,7 @@ def _authorize_import(request: Request, db: Session, x_api_key: Optional[str]) -
         return f"apikey:{key.prefix}"
     # Fall back to session auth.
     user = get_current_user(request, db)
-    if user.role not in _IMPORT_ROLES:
+    if not permissions.has_permission(db, user, "import_scans"):
         raise HTTPException(status_code=403, detail="You cannot import scans")
     return f"user:{user.username}"
 
@@ -720,7 +827,7 @@ async def import_scan(
 # ── API keys (admin) ──────────────────────────────────────────────
 
 @app.get("/api/apikeys")
-def list_api_keys(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def list_api_keys(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
     rows = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
     return [
         {
@@ -740,14 +847,14 @@ class ApiKeyCreate(BaseModel):
 
 
 @app.post("/api/apikeys")
-def create_api_key(body: ApiKeyCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def create_api_key(body: ApiKeyCreate, db: Session = Depends(get_db), user: User = Depends(require_permission("manage_settings"))):
     row, plaintext = api_keys.generate(db, body.name, created_by=user.username)
     # The plaintext key is returned exactly once.
     return {"id": row.id, "name": row.name, "prefix": row.prefix, "key": plaintext}
 
 
 @app.delete("/api/apikeys/{key_id}")
-def revoke_api_key(key_id: str, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def revoke_api_key(key_id: str, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
     row = db.query(ApiKey).filter(ApiKey.id == key_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="API key not found")

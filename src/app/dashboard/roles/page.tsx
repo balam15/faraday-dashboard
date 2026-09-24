@@ -5,11 +5,15 @@ import {
   useUsers,
   useApplications,
   useGroupMappings,
+  useRoles,
+  useMe,
   updateGroupMapping,
   createUser,
   updateUserRole,
   setUserActive,
   deleteUser,
+  createRole,
+  deleteRole,
 } from "@/lib/api";
 import {
   Select,
@@ -51,6 +55,7 @@ interface Permission {
 interface Role {
   id: string;
   name: string;
+  rawName?: string;
   description: string;
   permissions: string[];
   userCount: number;
@@ -88,43 +93,6 @@ const allPermissions: Permission[] = [
   { id: "manage_settings", label: "Manage Settings", description: "Change system settings including LDAP" },
 ];
 
-// Fixed, code-defined roles (RBAC is role-string based; there is no custom-role
-// backend). userCount is filled in live from the real user list.
-const roleDefs: Role[] = [
-  {
-    id: "r1",
-    name: "Admin",
-    description: "Full access to all features",
-    permissions: allPermissions.map((p) => p.id),
-    userCount: 0,
-    isSystem: true,
-  },
-  {
-    id: "r2",
-    name: "Security Engineer",
-    description: "Can import scans and manage findings",
-    permissions: ["view_dashboard", "view_applications", "view_findings", "import_scans", "manage_findings"],
-    userCount: 0,
-    isSystem: true,
-  },
-  {
-    id: "r3",
-    name: "Developer",
-    description: "Read-only access to findings for their apps",
-    permissions: ["view_dashboard", "view_applications", "view_findings"],
-    userCount: 0,
-    isSystem: true,
-  },
-  {
-    id: "r4",
-    name: "Viewer",
-    description: "Dashboard and findings view only",
-    permissions: ["view_dashboard", "view_findings"],
-    userCount: 0,
-    isSystem: true,
-  },
-];
-
 // Canonical backend role → display label used by the UI's color maps.
 const ROLE_DISPLAY: Record<string, string> = {
   admin: "Admin",
@@ -134,7 +102,13 @@ const ROLE_DISPLAY: Record<string, string> = {
 };
 
 function toDisplayRole(role: string): string {
-  return ROLE_DISPLAY[role.toLowerCase().replace(/\s+/g, "_")] ?? role;
+  const key = role.toLowerCase().replace(/\s+/g, "_");
+  if (ROLE_DISPLAY[key]) return ROLE_DISPLAY[key];
+  // Prettify a custom role slug, e.g. "app_auditor" → "App Auditor".
+  return key
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 function shortNameFromDn(dn: string): string {
@@ -177,6 +151,15 @@ export default function RolesPage() {
   const { users, reload: reloadUsers } = useUsers();
   const { applications } = useApplications();
   const { mappings, reload: reloadMappings } = useGroupMappings();
+  const { roles: apiRoles, reload: reloadRoles } = useRoles();
+  const { me } = useMe();
+  const canManageRoles = !!me?.permissions.includes("manage_roles");
+
+  // Role options for the user dropdowns (system + custom).
+  const roleOptions = useMemo(
+    () => apiRoles.map((r) => ({ value: r.name, label: toDisplayRole(r.name) })),
+    [apiRoles],
+  );
 
   // Add-user dialog
   const [addUserOpen, setAddUserOpen] = useState(false);
@@ -192,8 +175,6 @@ export default function RolesPage() {
 
   // Manage-user dialog (change role / enable-disable / delete)
   const [manageUser, setManageUser] = useState<User | null>(null);
-
-  const ROLE_VALUES = ["admin", "security_engineer", "developer", "viewer"];
 
   async function handleCreateUser() {
     if (newUser.username.length < 3 || newUser.password.length < 8) {
@@ -237,20 +218,78 @@ export default function RolesPage() {
     reloadUsers();
   }
 
+  // New Role dialog
+  const [addRoleOpen, setAddRoleOpen] = useState(false);
+  const [roleForm, setRoleForm] = useState<{ name: string; description: string; permissions: string[] }>({
+    name: "",
+    description: "",
+    permissions: ["view_dashboard", "view_findings"],
+  });
+  const [savingRole, setSavingRole] = useState(false);
+  const [roleError, setRoleError] = useState("");
+
+  function toggleRolePerm(id: string) {
+    setRoleForm((f) => ({
+      ...f,
+      permissions: f.permissions.includes(id)
+        ? f.permissions.filter((p) => p !== id)
+        : [...f.permissions, id],
+    }));
+  }
+
+  async function handleCreateRole() {
+    if (roleForm.name.trim().length < 2) {
+      setRoleError("Role name must be at least 2 characters.");
+      return;
+    }
+    setSavingRole(true);
+    setRoleError("");
+    try {
+      await createRole({
+        name: roleForm.name.trim(),
+        description: roleForm.description.trim(),
+        permissions: roleForm.permissions,
+      });
+      setAddRoleOpen(false);
+      setRoleForm({ name: "", description: "", permissions: ["view_dashboard", "view_findings"] });
+      reloadRoles();
+    } catch (e) {
+      setRoleError(e instanceof Error ? e.message : "Failed to create role");
+    } finally {
+      setSavingRole(false);
+    }
+  }
+
+  async function handleDeleteRole(rawName: string) {
+    try {
+      await deleteRole(rawName);
+      setSelectedRole(null);
+      setRoleDialogOpen(false);
+      reloadRoles();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete role");
+    }
+  }
+
   const availableApps = useMemo(
     () => applications.map((a) => a.name),
     [applications],
   );
 
-  // Fill role userCount from the real user list.
-  const mockRoles = useMemo(() => {
-    const counts: Record<string, number> = {};
-    users.forEach((u) => {
-      const d = toDisplayRole(u.role);
-      counts[d] = (counts[d] ?? 0) + 1;
-    });
-    return roleDefs.map((r) => ({ ...r, userCount: counts[r.name] ?? 0 }));
-  }, [users]);
+  // Roles from the backend (system + custom), mapped to the card shape.
+  const mockRoles: Role[] = useMemo(
+    () =>
+      apiRoles.map((r) => ({
+        id: r.name,
+        name: toDisplayRole(r.name),
+        rawName: r.name,
+        description: r.description,
+        permissions: r.permissions,
+        userCount: r.user_count,
+        isSystem: r.is_system,
+      })),
+    [apiRoles],
+  );
 
   // Real users mapped to the shape this page's markup expects.
   const mockUsers: User[] = useMemo(
@@ -352,12 +391,17 @@ export default function RolesPage() {
           <>
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">
-                {mockRoles.length} system roles · assign them to users in the Users tab
+                {mockRoles.length} roles · {mockRoles.filter((r) => !r.isSystem).length} custom
               </p>
-              <span className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 text-sm font-medium rounded-lg">
-                <Shield className="h-4 w-4" />
-                System-defined
-              </span>
+              {canManageRoles && (
+                <button
+                  onClick={() => setAddRoleOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  <Plus className="h-4 w-4" />
+                  New Role
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -387,17 +431,17 @@ export default function RolesPage() {
                           {role.description}
                         </p>
                       </div>
-                      {!role.isSystem && (
+                      {!role.isSystem && canManageRoles && (
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={(e) => e.stopPropagation()}
-                            className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
-                          >
-                            <Pencil className="h-3.5 w-3.5 text-slate-400" />
-                          </button>
-                          <button
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete role "${role.name}"?`)) {
+                                handleDeleteRole(role.rawName ?? role.id);
+                              }
+                            }}
                             className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete role"
                           >
                             <Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-red-500" />
                           </button>
@@ -719,9 +763,9 @@ export default function RolesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ROLE_VALUES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {ROLE_DISPLAY[r]}
+                    {roleOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -789,12 +833,12 @@ export default function RolesPage() {
                 <Label className="text-sm font-medium text-slate-600">Role</Label>
                 <Select
                   value={
-                    ROLE_VALUES.find((r) => ROLE_DISPLAY[r] === manageUser.role) ?? "viewer"
+                    roleOptions.find((o) => o.label === manageUser.role)?.value ?? "viewer"
                   }
                   onValueChange={(v) => {
                     if (v) {
                       handleChangeRole(manageUser.id, v);
-                      setManageUser({ ...manageUser, role: ROLE_DISPLAY[v] });
+                      setManageUser({ ...manageUser, role: toDisplayRole(v) });
                     }
                   }}
                 >
@@ -802,9 +846,9 @@ export default function RolesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ROLE_VALUES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {ROLE_DISPLAY[r]}
+                    {roleOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -888,6 +932,91 @@ export default function RolesPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* New Role dialog */}
+      <Dialog open={addRoleOpen} onOpenChange={setAddRoleOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-slate-800">
+              Create Custom Role
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-slate-600">Role name</Label>
+                <Input
+                  value={roleForm.name}
+                  onChange={(e) => setRoleForm({ ...roleForm, name: e.target.value })}
+                  placeholder="app_auditor"
+                  className="border-slate-200 font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-slate-600">Description</Label>
+                <Input
+                  value={roleForm.description}
+                  onChange={(e) => setRoleForm({ ...roleForm, description: e.target.value })}
+                  placeholder="Read-only auditor"
+                  className="border-slate-200"
+                />
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                Permissions
+              </p>
+              <div className="space-y-1.5">
+                {allPermissions.map((perm) => {
+                  const checked = roleForm.permissions.includes(perm.id);
+                  return (
+                    <label
+                      key={perm.id}
+                      className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer border transition-colors ${
+                        checked ? "bg-blue-50 border-blue-200" : "bg-slate-50 border-transparent hover:bg-slate-100"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleRolePerm(perm.id)}
+                        className="h-4 w-4 accent-blue-600"
+                      />
+                      <div className="flex-1">
+                        <p className="text-xs font-medium text-slate-700">{perm.label}</p>
+                        <p className="text-[10px] text-slate-400">{perm.description}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {roleError && (
+              <div className="p-2.5 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">
+                {roleError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setAddRoleOpen(false)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 text-sm font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateRole}
+                disabled={savingRole}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                {savingRole ? "Creating..." : "Create Role"}
+              </button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -50,6 +50,21 @@ class LdapGroupMapping(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Role(Base):
+    """A role (system or custom) with a set of permissions.
+
+    System roles (admin/security_engineer/developer/viewer) are seeded at
+    startup and cannot be edited or deleted. Admins can create/delete custom
+    roles and assign them to users.
+    """
+    __tablename__ = "roles"
+    name        = Column(String(64), primary_key=True)
+    description = Column(String(256), nullable=True, default="")
+    permissions = Column(JSON, nullable=False, default=list)  # list of permission ids
+    is_system   = Column(Boolean, default=False)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
 class LdapConfig(Base):
     """Stores LDAP connection settings."""
     __tablename__ = "ldap_config"
