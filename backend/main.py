@@ -8,7 +8,7 @@ from datetime import datetime
 
 from models import (
     init_db, get_db, SessionLocal, User, SystemConfig, LdapConfig,
-    LdapGroupMapping, Role,
+    LdapGroupMapping, Role, Activity,
 )
 from auth import hash_password, verify_password, create_access_token, decode_token
 from ldap_auth import ldap_authenticate, resolve_role_from_groups
@@ -116,6 +116,15 @@ def require_permission(perm: str):
             raise HTTPException(status_code=403, detail=f"Missing permission: {perm}")
         return user
     return _dep
+
+
+def record_activity(db: Session, kind: str, message: str, actor: Optional[str] = None) -> None:
+    """Append an event to the dashboard activity feed. Best-effort."""
+    try:
+        db.add(Activity(kind=kind, message=message[:512], actor=actor))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 # ─────────────────────────────────────────────
@@ -320,6 +329,30 @@ def logout(response: Response):
     return {"ok": True}
 
 
+@app.get("/api/activity")
+def list_activity(
+    limit: int = 30,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(Activity)
+        .order_by(Activity.created_at.desc())
+        .limit(min(max(limit, 1), 100))
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "kind": r.kind,
+            "message": r.message,
+            "actor": r.actor,
+            "created_at": serializers.iso(r.created_at),
+        }
+        for r in rows
+    ]
+
+
 # ─────────────────────────────────────────────
 # Routes: Users (admin only)
 # ─────────────────────────────────────────────
@@ -341,7 +374,7 @@ class UserCreate(BaseModel):
 
 
 @app.post("/api/users", response_model=UserOut)
-def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_users"))):
+def create_user(body: UserCreate, db: Session = Depends(get_db), actor: User = Depends(require_permission("manage_users"))):
     if not permissions.role_exists(db, body.role):
         raise HTTPException(status_code=400, detail="Invalid role")
     if db.query(User).filter(User.username == body.username).first():
@@ -358,6 +391,7 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depen
     db.add(user)
     db.commit()
     db.refresh(user)
+    record_activity(db, "user", f"Created user {user.username} ({user.role})", actor=actor.username)
     return user
 
 
@@ -426,8 +460,10 @@ def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    uname = user.username
     db.delete(user)
     db.commit()
+    record_activity(db, "user", f"Deleted user {uname}", actor=current_user.username)
     return {"ok": True}
 
 
@@ -473,7 +509,7 @@ def list_roles(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 
 @app.post("/api/roles")
-def create_role(body: RoleIn, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_roles"))):
+def create_role(body: RoleIn, db: Session = Depends(get_db), actor: User = Depends(require_permission("manage_roles"))):
     name = body.name.strip().lower().replace(" ", "_")
     if not _ROLE_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Role name must be lowercase letters, numbers, or underscores")
@@ -487,6 +523,7 @@ def create_role(body: RoleIn, db: Session = Depends(get_db), _: User = Depends(r
     )
     db.add(role)
     db.commit()
+    record_activity(db, "role", f"Created role {name}", actor=actor.username)
     return _role_dict(db, role)
 
 
@@ -506,7 +543,7 @@ def update_role(name: str, body: RoleUpdate, db: Session = Depends(get_db), _: U
 
 
 @app.delete("/api/roles/{name}")
-def delete_role(name: str, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_roles"))):
+def delete_role(name: str, db: Session = Depends(get_db), actor: User = Depends(require_permission("manage_roles"))):
     role = db.query(Role).filter(Role.name == name).first()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -517,6 +554,7 @@ def delete_role(name: str, db: Session = Depends(get_db), _: User = Depends(requ
         raise HTTPException(status_code=400, detail=f"Role is assigned to {in_use} user(s); reassign them first")
     db.delete(role)
     db.commit()
+    record_activity(db, "role", f"Deleted role {name}", actor=actor.username)
     return {"ok": True}
 
 
@@ -727,8 +765,10 @@ def delete_app(app_id: str, db: Session = Depends(get_db), user: User = Depends(
     app_row = db.query(Application).filter(Application.id == app_id).first()
     if not app_row or not _app_visible(user, app_row):
         raise HTTPException(status_code=404, detail="Application not found")
+    app_name = app_row.name
     db.delete(app_row)
     db.commit()
+    record_activity(db, "application", f"Deleted application {app_name}", actor=user.username)
     return {"ok": True}
 
 
@@ -737,8 +777,10 @@ def delete_tag(tag_id: str, db: Session = Depends(get_db), user: User = Depends(
     tag = db.query(ImageTag).filter(ImageTag.id == tag_id).first()
     if not tag or not _app_visible(user, tag.application):
         raise HTTPException(status_code=404, detail="Tag not found")
+    label = f"{tag.application.name}:{tag.tag}"
     db.delete(tag)  # cascades to its scans and findings
     db.commit()
+    record_activity(db, "application", f"Deleted image tag {label}", actor=user.username)
     return {"ok": True}
 
 
@@ -876,6 +918,13 @@ async def import_scan(
         scan_type_override=None,
         app_type=app_type,
         team=team,
+    )
+    via = "via API" if identity.startswith("apikey:") else "via UI"
+    record_activity(
+        db, "import",
+        f"Imported {scan.scanner} ({scan.scan_type}) into {app_name.strip()}:{tag.strip()} "
+        f"— {len(result.findings)} findings ({via})",
+        actor=identity,
     )
     return {
         "ok": True,

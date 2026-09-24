@@ -1,7 +1,7 @@
 "use client";
 
 import { getTotalFindings } from "@/lib/mock-data";
-import { useApplications } from "@/lib/api";
+import { useApplications, useFindings } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +41,12 @@ const SEVERITY_COLORS = {
 
 export default function DashboardPage() {
   const { applications: mockApplications } = useApplications();
+  const { findings: allFindings } = useFindings();
   const totals = getTotalFindings(mockApplications);
+  const mitigatedCount = allFindings.filter(
+    (f) => f.status === "mitigated" || f.status === "accepted",
+  ).length;
+  const openCount = allFindings.filter((f) => f.status === "open").length;
   const totalFindings =
     totals.critical + totals.high + totals.medium + totals.low + totals.info;
   const criticalHighCount = totals.critical + totals.high;
@@ -171,10 +176,10 @@ export default function DashboardPage() {
                     Mitigated
                   </p>
                   <p className="text-3xl font-bold text-green-600 mt-1">
-                    12
+                    {mitigatedCount}
                   </p>
                   <p className="text-xs text-slate-400 mt-1">
-                    last 7 days
+                    mitigated or accepted
                   </p>
                 </div>
                 <div className="p-2.5 bg-green-50 rounded-xl">
@@ -389,7 +394,7 @@ export default function DashboardPage() {
               <div className="flex items-center gap-1">
                 <TrendingDown className="h-4 w-4 text-green-500" />
                 <span className="text-xs text-green-600">
-                  12% improvement this week
+                  {openCount} open · {mitigatedCount} resolved
                 </span>
               </div>
             </div>

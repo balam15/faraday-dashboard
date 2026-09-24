@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
     const prefixes = [
       "system",
       "auth",
+      "activity",
       "users",
       "roles",
       "ldap",

@@ -50,6 +50,16 @@ class LdapGroupMapping(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Activity(Base):
+    """A dashboard activity event, shown in the notification feed."""
+    __tablename__ = "activity"
+    id         = Column(String(36), primary_key=True, default=gen_uuid)
+    kind       = Column(String(32), nullable=False)   # import | user | role | application | auth
+    message    = Column(String(512), nullable=False)
+    actor      = Column(String(128), nullable=True)   # username or "apikey:<prefix>"
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Role(Base):
     """A role (system or custom) with a set of permissions.
 

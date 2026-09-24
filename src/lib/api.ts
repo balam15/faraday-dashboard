@@ -160,6 +160,25 @@ export async function importScan(args: ImportScanArgs) {
   );
 }
 
+export interface ActivityItem {
+  id: string;
+  kind: string;
+  message: string;
+  actor: string | null;
+  created_at: string;
+}
+
+export function useActivity(pollMs = 30000) {
+  const s = useAsync<ActivityItem[]>(() => apiGet("/api/activity?limit=30"), [], []);
+  useEffect(() => {
+    if (!pollMs) return;
+    const t = setInterval(() => s.reload(), pollMs);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollMs]);
+  return { activity: s.data, loading: s.loading, reload: s.reload };
+}
+
 export function useScanTypes() {
   const s = useAsync<{ scan_types: string[] }>(
     () => apiGet("/api/scanners"),
