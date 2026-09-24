@@ -885,6 +885,8 @@ def revoke_api_key(key_id: str, db: Session = Depends(get_db), _: User = Depends
     row = db.query(ApiKey).filter(ApiKey.id == key_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="API key not found")
-    row.is_active = False
+    # A revoked key is unusable, so remove it entirely rather than keeping a
+    # disabled row around cluttering the list.
+    db.delete(row)
     db.commit()
     return {"ok": True}

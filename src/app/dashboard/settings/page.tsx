@@ -914,14 +914,12 @@ export default function SettingsPage() {
                           {apiKey.last_used?.slice(0, 10) ?? "never"}
                         </p>
                       </div>
-                      {apiKey.is_active && (
-                        <button
-                          onClick={() => handleRevokeKey(apiKey.id)}
-                          className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
-                        >
-                          Revoke
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleRevokeKey(apiKey.id)}
+                        className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                      >
+                        {apiKey.is_active ? "Revoke" : "Remove"}
+                      </button>
                     </div>
                   ))}
 
