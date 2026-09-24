@@ -11,6 +11,7 @@ import {
   createUser,
   updateUserRole,
   setUserActive,
+  setUserApps,
   deleteUser,
   createRole,
   deleteRole,
@@ -69,6 +70,7 @@ interface User {
   email: string;
   role: string;
   authType: string;
+  allowedApps: string[] | null;
   lastLogin: string;
   status: "active" | "inactive";
 }
@@ -143,6 +145,77 @@ const permissionIcons: Record<string, typeof Eye> = {
   manage_settings: Settings,
 };
 
+type AccessModeT = "none" | "all" | "specific";
+
+function AppAccessSelector({
+  mode,
+  apps,
+  availableApps,
+  onMode,
+  onToggleApp,
+}: {
+  mode: AccessModeT;
+  apps: string[];
+  availableApps: string[];
+  onMode: (m: AccessModeT) => void;
+  onToggleApp: (app: string) => void;
+}) {
+  const modes: { key: AccessModeT; label: string }[] = [
+    { key: "none", label: "No access" },
+    { key: "all", label: "All apps" },
+    { key: "specific", label: "Specific" },
+  ];
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-sm font-medium text-slate-600">App access</Label>
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+        {modes.map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => onMode(m.key)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              mode === m.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {mode === "specific" && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {availableApps.length === 0 && (
+            <span className="text-xs text-slate-400">No applications yet.</span>
+          )}
+          {availableApps.map((app) => {
+            const on = apps.includes(app);
+            return (
+              <button
+                key={app}
+                type="button"
+                onClick={() => onToggleApp(app)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  on
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"
+                }`}
+              >
+                {app}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {mode === "none" && (
+        <p className="text-xs text-slate-400">User won&apos;t see any application until granted.</p>
+      )}
+      {mode === "all" && (
+        <p className="text-xs text-slate-400">User can see every application.</p>
+      )}
+    </div>
+  );
+}
+
 export default function RolesPage() {
   const [activeTab, setActiveTab] = useState<"roles" | "app-access" | "users">("roles");
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
@@ -174,8 +247,19 @@ export default function RolesPage() {
   const [savingUser, setSavingUser] = useState(false);
   const [userError, setUserError] = useState("");
 
-  // Manage-user dialog (change role / enable-disable / delete)
+  // Manage-user dialog (change role / app access / enable-disable / delete)
   const [manageUser, setManageUser] = useState<User | null>(null);
+
+  // App-access selection: "none" = [] , "all" = null , "specific" = list
+  type AccessMode = "none" | "all" | "specific";
+  const [newUserAccess, setNewUserAccess] = useState<AccessMode>("none");
+  const [newUserApps, setNewUserApps] = useState<string[]>([]);
+
+  function accessToAllowedApps(mode: AccessMode, apps: string[]): string[] | null {
+    if (mode === "all") return null;
+    if (mode === "specific") return apps;
+    return [];
+  }
 
   async function handleCreateUser() {
     if (newUser.username.length < 3 || newUser.password.length < 8) {
@@ -191,9 +275,12 @@ export default function RolesPage() {
         email: newUser.email.trim() || undefined,
         display_name: newUser.display_name.trim() || undefined,
         role: newUser.role,
+        allowed_apps: accessToAllowedApps(newUserAccess, newUserApps),
       });
       setAddUserOpen(false);
       setNewUser({ username: "", display_name: "", email: "", password: "", role: "viewer" });
+      setNewUserAccess("none");
+      setNewUserApps([]);
       reloadUsers();
     } catch (e) {
       setUserError(e instanceof Error ? e.message : "Failed to create user");
@@ -215,6 +302,31 @@ export default function RolesPage() {
 
   async function handleDeleteUser(userId: string) {
     await deleteUser(userId);
+    setManageUser(null);
+    reloadUsers();
+  }
+
+  // App access within the Manage-user dialog
+  const [manageAccess, setManageAccess] = useState<AccessMode>("none");
+  const [manageApps, setManageApps] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!manageUser) return;
+    if (manageUser.allowedApps === null) {
+      setManageAccess("all");
+      setManageApps([]);
+    } else if (manageUser.allowedApps.length === 0) {
+      setManageAccess("none");
+      setManageApps([]);
+    } else {
+      setManageAccess("specific");
+      setManageApps(manageUser.allowedApps);
+    }
+  }, [manageUser]);
+
+  async function handleSaveManageApps() {
+    if (!manageUser) return;
+    await setUserApps(manageUser.id, accessToAllowedApps(manageAccess, manageApps));
     setManageUser(null);
     reloadUsers();
   }
@@ -302,6 +414,7 @@ export default function RolesPage() {
         email: u.email ?? "",
         role: toDisplayRole(u.role),
         authType: u.auth_type,
+        allowedApps: u.allowed_apps,
         lastLogin: u.last_login || u.created_at,
         status: u.is_active ? "active" : "inactive",
       })),
@@ -803,6 +916,17 @@ export default function RolesPage() {
                 className="border-slate-200"
               />
             </div>
+            <AppAccessSelector
+              mode={newUserAccess}
+              apps={newUserApps}
+              availableApps={availableApps}
+              onMode={setNewUserAccess}
+              onToggleApp={(app) =>
+                setNewUserApps((prev) =>
+                  prev.includes(app) ? prev.filter((a) => a !== app) : [...prev, app],
+                )
+              }
+            />
             {userError && (
               <div className="p-2.5 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">
                 {userError}
@@ -866,6 +990,29 @@ export default function RolesPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="flex items-end justify-between gap-3">
+                <div className="flex-1">
+                  <AppAccessSelector
+                    mode={manageAccess}
+                    apps={manageApps}
+                    availableApps={availableApps}
+                    onMode={setManageAccess}
+                    onToggleApp={(app) =>
+                      setManageApps((prev) =>
+                        prev.includes(app) ? prev.filter((a) => a !== app) : [...prev, app],
+                      )
+                    }
+                  />
+                </div>
+                <button
+                  onClick={handleSaveManageApps}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                >
+                  Save access
+                </button>
+              </div>
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <button
                   onClick={() =>

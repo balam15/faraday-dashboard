@@ -178,6 +178,7 @@ export interface ApiUser {
   display_name: string | null;
   role: string;
   auth_type: string;
+  allowed_apps: string[] | null;
   is_active: boolean;
   last_login: string | null;
   created_at: string;
@@ -194,10 +195,16 @@ export interface NewUser {
   email?: string;
   display_name?: string;
   role: string;
+  // [] = no access (default), null = all apps, [names] = specific.
+  allowed_apps?: string[] | null;
 }
 
 export function createUser(body: NewUser) {
   return apiSend<ApiUser>("/api/users", "POST", body);
+}
+
+export function setUserApps(id: string, allowed_apps: string[] | null) {
+  return apiSend(`/api/users/${id}/apps`, "PATCH", { allowed_apps });
 }
 
 export function updateUserRole(id: string, role: string) {

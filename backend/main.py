@@ -148,6 +148,8 @@ class UserOut(BaseModel):
     display_name: Optional[str]
     role: str
     auth_type: str
+    # None = all apps; [] = no access yet; [names] = specific apps.
+    allowed_apps: Optional[list] = None
     is_active: bool
     last_login: Optional[datetime]
     created_at: datetime
@@ -333,6 +335,9 @@ class UserCreate(BaseModel):
     email: Optional[str] = None
     display_name: Optional[str] = None
     role: str = "viewer"
+    # App access: [] = no apps (deny-by-default), None = all apps,
+    # [names] = specific apps. Defaults to no access — an admin grants it.
+    allowed_apps: Optional[list[str]] = Field(default_factory=list)
 
 
 @app.post("/api/users", response_model=UserOut)
@@ -348,11 +353,32 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), _: User = Depen
         hashed_password=hash_password(body.password),
         auth_type="local",
         role=body.role,
+        allowed_apps=body.allowed_apps,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+class UserAppsUpdate(BaseModel):
+    # None = all apps; [] = no access; [names] = specific applications.
+    allowed_apps: Optional[list[str]] = None
+
+
+@app.patch("/api/users/{user_id}/apps")
+def update_user_apps(
+    user_id: str,
+    body: UserAppsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("manage_users")),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.allowed_apps = body.allowed_apps
+    db.commit()
+    return {"ok": True}
 
 
 @app.patch("/api/users/{user_id}/active")

@@ -8,15 +8,17 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List
 
-from . import fortify, sarif, trivy, zap
+from . import fortify, sarif, semgrep, trivy, zap
 from .base import ParsedFinding, ParseResult
 
-# Public key → parse function
+# Public key → parse function. Keys mirror DefectDojo's scan_type names so the
+# same CI/CD pipeline can post here unchanged.
 _REGISTRY: Dict[str, Callable[[bytes], ParseResult]] = {
     "Trivy Scan": trivy.parse,
     "ZAP Scan": zap.parse,
     "SARIF": sarif.parse,
     "Fortify Scan": fortify.parse,
+    "Semgrep JSON Report": semgrep.parse,
 }
 
 # Friendly aliases so callers can be a little loose.
@@ -27,7 +29,8 @@ _ALIASES = {
     "sarif": "SARIF",
     "megalinter": "SARIF",
     "codeql": "SARIF",
-    "semgrep": "SARIF",
+    "semgrep": "Semgrep JSON Report",
+    "semgrep json report": "Semgrep JSON Report",
     "fortify": "Fortify Scan",
 }
 
@@ -58,9 +61,11 @@ def detect(content: bytes) -> str:
             return "Fortify Scan"
         raise ValueError("Unrecognised XML report")
     if head[:1] in (b"{", b"["):
-        low = head.lower()
-        if b'"$schema"' in low and b"sarif" in low or b'"runs"' in low:
+        low = content[:8192].lower()
+        if (b'"$schema"' in low and b"sarif" in low) or b'"runs"' in low:
             return "SARIF"
+        if b'"check_id"' in low or b'"results"' in low and b'"extra"' in low:
+            return "Semgrep JSON Report"
         if b"schemaversion" in low or b"vulnerabilities" in low or b"results" in low:
             return "Trivy Scan"
     raise ValueError("Could not auto-detect scan format; specify scan_type")
