@@ -97,7 +97,15 @@ export function useApplication(id: string | undefined) {
     null,
     [id],
   );
-  return { application: s.data, loading: s.loading, error: s.error };
+  return { application: s.data, loading: s.loading, error: s.error, reload: s.reload };
+}
+
+export function deleteApp(id: string) {
+  return apiSend(`/api/apps/${id}`, "DELETE");
+}
+
+export function deleteTag(id: string) {
+  return apiSend(`/api/tags/${id}`, "DELETE");
 }
 
 export function useScanFindings(scanId: string | undefined) {

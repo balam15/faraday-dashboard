@@ -697,11 +697,21 @@ def get_app(app_id: str, db: Session = Depends(get_db), user: User = Depends(get
 
 
 @app.delete("/api/apps/{app_id}")
-def delete_app(app_id: str, db: Session = Depends(get_db), _: User = Depends(require_permission("manage_applications"))):
+def delete_app(app_id: str, db: Session = Depends(get_db), user: User = Depends(require_permission("manage_applications"))):
     app_row = db.query(Application).filter(Application.id == app_id).first()
-    if not app_row:
+    if not app_row or not _app_visible(user, app_row):
         raise HTTPException(status_code=404, detail="Application not found")
     db.delete(app_row)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: str, db: Session = Depends(get_db), user: User = Depends(require_permission("manage_applications"))):
+    tag = db.query(ImageTag).filter(ImageTag.id == tag_id).first()
+    if not tag or not _app_visible(user, tag.application):
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.delete(tag)  # cascades to its scans and findings
     db.commit()
     return {"ok": True}
 

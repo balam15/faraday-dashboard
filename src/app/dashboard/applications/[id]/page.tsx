@@ -1,13 +1,13 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import {
   getRiskBadgeClass,
   type ScanResult,
 } from "@/lib/mock-data";
-import { useApplication } from "@/lib/api";
+import { useApplication, deleteApp, deleteTag } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ import {
   XCircle,
   Loader2,
   FileDown,
+  Trash2,
 } from "lucide-react";
 
 function formatDate(dateString: string) {
@@ -107,7 +108,29 @@ function DownloadReportButton({
 
 export default function ApplicationDetailPage() {
   const params = useParams();
-  const { application: app, loading } = useApplication(params.id as string);
+  const router = useRouter();
+  const { application: app, loading, reload } = useApplication(params.id as string);
+
+  async function handleDeleteApp() {
+    if (!app) return;
+    if (!confirm(`Delete application "${app.name}" and all its scans?`)) return;
+    try {
+      await deleteApp(app.id);
+      router.push("/dashboard/applications");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete application");
+    }
+  }
+
+  async function handleDeleteTag(tagId: string, tagName: string) {
+    if (!confirm(`Delete image tag "${tagName}" and its scans?`)) return;
+    try {
+      await deleteTag(tagId);
+      reload();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete tag");
+    }
+  }
 
   if (loading) {
     return <div className="p-6" />;
@@ -129,6 +152,16 @@ export default function ApplicationDetailPage() {
       />
 
       <div className="p-6 space-y-6">
+        <div className="flex justify-end">
+          <button
+            onClick={handleDeleteApp}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg transition-colors"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete Application
+          </button>
+        </div>
+
         {/* App summary */}
         <div className="grid grid-cols-4 gap-4">
           <Card className="border-0 shadow-sm">
@@ -239,6 +272,14 @@ export default function ApplicationDetailPage() {
                       tagId={imageTag.id}
                       tagName={imageTag.tag}
                     />
+                    {/* Delete tag */}
+                    <button
+                      onClick={() => handleDeleteTag(imageTag.id, imageTag.tag)}
+                      className="flex items-center justify-center h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Delete this image tag"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
 
