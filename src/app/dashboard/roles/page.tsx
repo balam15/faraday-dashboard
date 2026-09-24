@@ -68,6 +68,7 @@ interface User {
   username: string;
   email: string;
   role: string;
+  authType: string;
   lastLogin: string;
   status: "active" | "inactive";
 }
@@ -300,6 +301,7 @@ export default function RolesPage() {
         username: u.username,
         email: u.email ?? "",
         role: toDisplayRole(u.role),
+        authType: u.auth_type,
         lastLogin: u.last_login || u.created_at,
         status: u.is_active ? "active" : "inactive",
       })),
@@ -694,6 +696,16 @@ export default function RolesPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
+                          user.authType === "ldap"
+                            ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                            : "bg-slate-50 text-slate-600 border-slate-200"
+                        }`}
+                        title={user.authType === "ldap" ? "Active Directory user" : "Local account"}
+                      >
+                        {user.authType === "ldap" ? "LDAP" : "Local"}
+                      </span>
                       <Badge
                         variant="outline"
                         className={`text-xs border ${roleColors[user.role] || "bg-gray-100 text-gray-600"}`}

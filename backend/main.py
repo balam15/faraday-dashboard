@@ -119,7 +119,7 @@ class SetupRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
-    auth_type: str = "local"   # "local" | "ldap"
+    auth_type: str = "auto"    # "auto" | "local" | "ldap"
 
 
 class TokenResponse(BaseModel):
@@ -210,53 +210,67 @@ def first_run_setup(body: SetupRequest, response: Response, db: Session = Depend
 # Routes: Auth
 # ─────────────────────────────────────────────
 
+def _try_local_login(db: Session, username: str, password: str) -> Optional[User]:
+    """Return the user if local credentials are valid; None if there's no such
+    local account. Raises 401 only when the account exists but is disabled."""
+    user = db.query(User).filter(User.username == username).first()
+    if not user or user.auth_type != "local" or not user.hashed_password:
+        return None
+    if not verify_password(password, user.hashed_password):
+        return None
+    if not user.is_active:
+        raise HTTPException(status_code=401, detail="Account disabled")
+    return user
+
+
+def _try_ldap_login(db: Session, username: str, password: str) -> Optional[User]:
+    """Authenticate against LDAP and upsert the user. None if LDAP rejects."""
+    success, user_info = ldap_authenticate(username, password, db)
+    if not success or not user_info:
+        return None
+
+    role, allowed_apps = resolve_role_from_groups(user_info.get("groups", []), db)
+    user = db.query(User).filter(User.username == user_info["username"]).first()
+    if not user:
+        user = User(
+            username=user_info["username"],
+            email=user_info.get("email"),
+            display_name=user_info.get("display_name"),
+            auth_type="ldap",
+            role=role,
+            allowed_apps=allowed_apps,
+        )
+        db.add(user)
+    else:
+        if not user.is_active:
+            raise HTTPException(status_code=401, detail="Account disabled")
+        user.role = role
+        user.allowed_apps = allowed_apps
+        user.email = user_info.get("email") or user.email
+        user.display_name = user_info.get("display_name") or user.display_name
+    return user
+
+
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
     if is_first_run(db):
         raise HTTPException(status_code=403, detail="Setup required")
 
-    if body.auth_type == "ldap":
-        success, user_info = ldap_authenticate(body.username, body.password, db)
-        if not success or not user_info:
-            raise HTTPException(status_code=401, detail="Invalid LDAP credentials")
+    mode = (body.auth_type or "auto").lower()
+    user: Optional[User] = None
 
-        role, allowed_apps = resolve_role_from_groups(user_info.get("groups", []), db)
+    # Try local first (no network round-trip), then LDAP — so the login form
+    # needs no "local vs AD" choice.
+    if mode in ("auto", "local"):
+        user = _try_local_login(db, body.username, body.password)
+    if user is None and mode in ("auto", "ldap"):
+        user = _try_ldap_login(db, body.username, body.password)
 
-        # Upsert LDAP user
-        user = db.query(User).filter(User.username == user_info["username"]).first()
-        if not user:
-            user = User(
-                username=user_info["username"],
-                email=user_info.get("email"),
-                display_name=user_info.get("display_name"),
-                auth_type="ldap",
-                role=role,
-                allowed_apps=allowed_apps,
-            )
-            db.add(user)
-        else:
-            # A user disabled in the app is blocked even if AD still accepts them.
-            if not user.is_active:
-                raise HTTPException(status_code=401, detail="Account disabled")
-            user.role = role
-            user.allowed_apps = allowed_apps
-            user.email = user_info.get("email") or user.email
-            user.display_name = user_info.get("display_name") or user.display_name
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        user.last_login = datetime.utcnow()
-        db.commit()
-
-    else:
-        # Local auth
-        user = db.query(User).filter(User.username == body.username).first()
-        if not user or user.auth_type != "local" or not user.hashed_password:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        if not verify_password(body.password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        if not user.is_active:
-            raise HTTPException(status_code=401, detail="Account disabled")
-        user.last_login = datetime.utcnow()
-        db.commit()
+    user.last_login = datetime.utcnow()
+    db.commit()
 
     token = create_access_token({"sub": user.username, "role": user.role})
     _set_auth_cookie(response, token)
