@@ -114,7 +114,7 @@ export function useScanFindings(scanId: string | undefined) {
     [],
     [scanId],
   );
-  return { findings: s.data, loading: s.loading, error: s.error };
+  return { findings: s.data, loading: s.loading, error: s.error, reload: s.reload };
 }
 
 export function useFindings() {

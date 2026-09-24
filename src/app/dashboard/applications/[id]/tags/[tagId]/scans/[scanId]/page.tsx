@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { useApplication, useScanFindings } from "@/lib/api";
+import { useApplication, useScanFindings, useMe, updateFindingStatus } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -110,14 +110,72 @@ function FindingRow({
   );
 }
 
+const STATUS_ORDER: Finding["status"][] = ["open", "mitigated", "false_positive", "accepted"];
+
+function StatusControl({
+  finding,
+  canManage,
+  onChanged,
+}: {
+  finding: Finding;
+  canManage: boolean;
+  onChanged: (status: Finding["status"]) => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+  if (!canManage) return null;
+
+  async function set(next: Finding["status"]) {
+    if (next === finding.status) return;
+    setSaving(next);
+    try {
+      await updateFindingStatus(finding.id, next);
+      onChanged(next);
+    } catch {
+      /* ignore */
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <div className="bg-slate-50 rounded-lg p-3">
+      <p className="text-xs font-medium text-slate-500 mb-2">Set status</p>
+      <div className="flex flex-wrap gap-2">
+        {STATUS_ORDER.map((s) => {
+          const cfg = statusConfig[s];
+          const active = finding.status === s;
+          return (
+            <button
+              key={s}
+              onClick={() => set(s)}
+              disabled={saving !== null}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-60 ${
+                active
+                  ? `${cfg.badge} border-transparent ring-2 ring-offset-1 ring-current`
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {saving === s ? "Saving..." : cfg.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FindingDetail({
   finding,
   open,
   onClose,
+  canManage,
+  onChanged,
 }: {
   finding: Finding | null;
   open: boolean;
   onClose: () => void;
+  canManage: boolean;
+  onChanged: (status: Finding["status"]) => void;
 }) {
   if (!finding) return null;
   const status = statusConfig[finding.status];
@@ -147,6 +205,8 @@ function FindingDetail({
               {status.label}
             </span>
           </div>
+
+          <StatusControl finding={finding} canManage={canManage} onChanged={onChanged} />
 
           {/* Location */}
           {finding.filePath && (
@@ -244,7 +304,15 @@ export default function FindingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // Real findings for this specific scan.
-  const { findings: mockFindings } = useScanFindings(scanId);
+  const { findings: mockFindings, reload } = useScanFindings(scanId);
+  const { me } = useMe();
+  const canManage = !!me?.permissions.includes("manage_findings");
+
+  function handleStatusChanged(next: Finding["status"]) {
+    setSelectedFinding((f) => (f ? { ...f, status: next } : f));
+    reload();
+  }
+
   const filteredFindings = mockFindings.filter((f) => {
     const matchSeverity =
       severityFilter === "all" || f.severity === severityFilter;
@@ -437,6 +505,8 @@ export default function FindingsPage() {
         finding={selectedFinding}
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
+        canManage={canManage}
+        onChanged={handleStatusChanged}
       />
     </div>
   );
