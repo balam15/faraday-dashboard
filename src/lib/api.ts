@@ -314,6 +314,36 @@ export function testLdap() {
   return apiSend<{ ok: boolean; message: string }>("/api/ldap/test", "POST");
 }
 
+// ── System settings (Security + Notifications) ────────────────────
+
+export interface SystemSettings {
+  session_timeout_minutes: number;
+  max_login_attempts: number;
+  lockout_minutes: number;
+  audit_logging: boolean;
+  force_https: boolean;
+  notify_new_critical: boolean;
+  notify_new_high: boolean;
+  notify_scan_completed: boolean;
+  notify_weekly_summary: boolean;
+  notification_email: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_from: string;
+  smtp_tls: boolean;
+  smtp_password_set?: boolean;
+}
+
+export function useSystemSettings() {
+  const s = useAsync<Partial<SystemSettings>>(() => apiGet("/api/settings"), {}, []);
+  return { settings: s.data, loading: s.loading, reload: s.reload };
+}
+
+export function saveSystemSettings(patch: Partial<SystemSettings> & { smtp_password?: string }) {
+  return apiSend<Partial<SystemSettings>>("/api/settings", "PUT", patch);
+}
+
 export interface GroupMapping {
   id: string;
   group_dn: string;

@@ -36,6 +36,8 @@ class User(Base):
     # None = access to all apps; a list of application IDs = restricted access.
     allowed_apps = Column(JSON, nullable=True)
     is_active    = Column(Boolean, default=True)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
     last_login   = Column(DateTime, nullable=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
 

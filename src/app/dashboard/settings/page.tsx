@@ -6,12 +6,15 @@ import {
   useGroupMappings,
   useApiKeys,
   useApplications,
+  useSystemSettings,
   saveLdapConfig,
+  saveSystemSettings,
   testLdap,
   addGroupMapping,
   deleteGroupMapping,
   createApiKey,
   revokeApiKey,
+  type SystemSettings,
 } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -88,7 +91,17 @@ export default function SettingsPage() {
   const { mappings, reload: reloadMappings } = useGroupMappings();
   const { keys: apiKeys, reload: reloadKeys } = useApiKeys();
   const { applications } = useApplications();
+  const { settings: loadedSettings } = useSystemSettings();
   const availableApps = applications.map((a) => a.name);
+
+  // System settings (Security + Notifications)
+  const [sys, setSys] = useState<Partial<SystemSettings>>({});
+  const [smtpPassword, setSmtpPassword] = useState("");
+  useEffect(() => {
+    if (loadedSettings && Object.keys(loadedSettings).length) setSys(loadedSettings);
+  }, [loadedSettings]);
+  const setS = <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) =>
+    setSys((prev) => ({ ...prev, [key]: value }));
 
   // LDAP state
   const [ldapHost, setLdapHost] = useState("");
@@ -170,20 +183,29 @@ export default function SettingsPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      await saveLdapConfig({
-        host: ldapHost,
-        port: Number(ldapPort) || 636,
-        base_dn: ldapBaseDn,
-        bind_dn: ldapBindDn,
-        user_filter: ldapUserFilter || undefined,
-        username_attr: ldapUsernameAttr,
-        email_attr: ldapEmailAttr,
-        display_name_attr: ldapDisplayNameAttr,
-        tls_verify: ldapTlsVerify === "true",
-        use_ssl: ldapHost.startsWith("ldaps://") || ldapPort === "636",
-        // Only send the password when the admin actually typed one.
-        ...(ldapBindPassword ? { bind_password: ldapBindPassword } : {}),
-      });
+      if (activeTab === "ldap") {
+        await saveLdapConfig({
+          host: ldapHost,
+          port: Number(ldapPort) || 636,
+          base_dn: ldapBaseDn,
+          bind_dn: ldapBindDn,
+          user_filter: ldapUserFilter || undefined,
+          username_attr: ldapUsernameAttr,
+          email_attr: ldapEmailAttr,
+          display_name_attr: ldapDisplayNameAttr,
+          tls_verify: ldapTlsVerify === "true",
+          use_ssl: ldapHost.startsWith("ldaps://") || ldapPort === "636",
+          // Only send the password when the admin actually typed one.
+          ...(ldapBindPassword ? { bind_password: ldapBindPassword } : {}),
+        });
+      } else {
+        // Notifications / Security / API tabs all persist system settings.
+        await saveSystemSettings({
+          ...sys,
+          ...(smtpPassword ? { smtp_password: smtpPassword } : {}),
+        });
+        setSmtpPassword("");
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {
@@ -706,42 +728,25 @@ export default function SettingsPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="px-6 pb-6 space-y-5">
-                  {[
-                    {
-                      label: "New Critical Finding",
-                      desc: "Alert when a critical severity finding is imported",
-                      defaultOn: true,
-                    },
-                    {
-                      label: "New High Finding",
-                      desc: "Alert when a high severity finding is imported",
-                      defaultOn: true,
-                    },
-                    {
-                      label: "Scan Completed",
-                      desc: "Notify when a scan import finishes",
-                      defaultOn: false,
-                    },
-                    {
-                      label: "Weekly Summary",
-                      desc: "Weekly digest of new findings per application",
-                      defaultOn: true,
-                    },
-                  ].map((item) => (
+                  {([
+                    ["notify_new_critical", "New Critical Finding", "Email when a critical finding is imported"],
+                    ["notify_new_high", "New High Finding", "Email when a high finding is imported"],
+                    ["notify_scan_completed", "Scan Completed", "Notify when a scan import finishes"],
+                    ["notify_weekly_summary", "Weekly Summary", "Weekly digest of new findings per application"],
+                  ] as const).map(([key, label, desc]) => (
                     <div
-                      key={item.label}
+                      key={key}
                       className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
                     >
                       <div>
-                        <p className="text-sm font-medium text-slate-700">
-                          {item.label}
-                        </p>
-                        <p className="text-xs text-slate-400">{item.desc}</p>
+                        <p className="text-sm font-medium text-slate-700">{label}</p>
+                        <p className="text-xs text-slate-400">{desc}</p>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input
                           type="checkbox"
-                          defaultChecked={item.defaultOn}
+                          checked={Boolean(sys[key])}
+                          onChange={(e) => setS(key, e.target.checked)}
                           className="sr-only peer"
                         />
                         <div className="w-10 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
@@ -750,17 +755,89 @@ export default function SettingsPage() {
                   ))}
 
                   <div className="space-y-1.5 pt-2">
-                    <Label className="text-sm font-medium text-slate-600">
-                      Notification Email
-                    </Label>
+                    <Label className="text-sm font-medium text-slate-600">Notification Email</Label>
                     <Input
-                      defaultValue="security-team@maybank.com"
-                      placeholder="email@example.com"
+                      value={sys.notification_email ?? ""}
+                      onChange={(e) => setS("notification_email", e.target.value)}
+                      placeholder="security-team@example.com"
                       className="border-slate-200"
                     />
                     <p className="text-xs text-slate-400">
-                      Critical and high findings will be sent to this address
+                      Critical/high findings are emailed to this address
                     </p>
+                  </div>
+
+                  {/* SMTP server (used to send the emails above) */}
+                  <div className="pt-2 border-t border-slate-100">
+                    <p className="text-sm font-semibold text-slate-700 mb-3">SMTP Server</p>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="col-span-2 space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">Host</Label>
+                        <Input
+                          value={sys.smtp_host ?? ""}
+                          onChange={(e) => setS("smtp_host", e.target.value)}
+                          placeholder="smtp.maybank.co.id"
+                          className="border-slate-200"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">Port</Label>
+                        <Input
+                          value={String(sys.smtp_port ?? 587)}
+                          onChange={(e) => setS("smtp_port", Number(e.target.value) || 587)}
+                          className="border-slate-200"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">Username</Label>
+                        <Input
+                          value={sys.smtp_user ?? ""}
+                          onChange={(e) => setS("smtp_user", e.target.value)}
+                          placeholder="(optional)"
+                          className="border-slate-200"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Password {sys.smtp_password_set && <span className="text-green-600 text-xs">(set)</span>}
+                        </Label>
+                        <Input
+                          type="password"
+                          value={smtpPassword}
+                          onChange={(e) => setSmtpPassword(e.target.value)}
+                          placeholder={sys.smtp_password_set ? "••••••• (leave blank to keep)" : "(optional)"}
+                          className="border-slate-200"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">From address</Label>
+                        <Input
+                          value={sys.smtp_from ?? ""}
+                          onChange={(e) => setS("smtp_from", e.target.value)}
+                          placeholder="faraday@maybank.co.id"
+                          className="border-slate-200"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">TLS (STARTTLS)</Label>
+                        <Select
+                          value={sys.smtp_tls === false ? "false" : "true"}
+                          onValueChange={(v) => setS("smtp_tls", v === "true")}
+                        >
+                          <SelectTrigger className="border-slate-200">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">Enabled</SelectItem>
+                            <SelectItem value="false">Disabled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -775,52 +852,69 @@ export default function SettingsPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="px-6 pb-6 space-y-5">
-                  {[
-                    {
-                      label: "Session Timeout",
-                      desc: "Automatically log out inactive users",
-                      value: "30 minutes",
-                    },
-                    {
-                      label: "Max Login Attempts",
-                      desc: "Lock account after failed attempts",
-                      value: "5 attempts",
-                    },
-                    {
-                      label: "Audit Logging",
-                      desc: "Log all user actions to audit trail",
-                      enabled: true,
-                    },
-                    {
-                      label: "Force HTTPS",
-                      desc: "Redirect all HTTP traffic to HTTPS",
-                      enabled: true,
-                    },
-                  ].map((item) => (
+                  <div className="flex items-center justify-between py-2 border-b border-slate-50">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">Session Timeout</p>
+                      <p className="text-xs text-slate-400">How long a login stays valid</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={String(sys.session_timeout_minutes ?? 480)}
+                        onChange={(e) => setS("session_timeout_minutes", Number(e.target.value) || 480)}
+                        className="w-24 border-slate-200 text-right"
+                      />
+                      <span className="text-sm text-slate-500">minutes</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between py-2 border-b border-slate-50">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">Max Login Attempts</p>
+                      <p className="text-xs text-slate-400">Lock the account after this many failures (0 = off)</p>
+                    </div>
+                    <Input
+                      value={String(sys.max_login_attempts ?? 5)}
+                      onChange={(e) => setS("max_login_attempts", Number(e.target.value) || 0)}
+                      className="w-24 border-slate-200 text-right"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between py-2 border-b border-slate-50">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">Lockout Duration</p>
+                      <p className="text-xs text-slate-400">How long an account stays locked</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={String(sys.lockout_minutes ?? 15)}
+                        onChange={(e) => setS("lockout_minutes", Number(e.target.value) || 15)}
+                        className="w-24 border-slate-200 text-right"
+                      />
+                      <span className="text-sm text-slate-500">minutes</span>
+                    </div>
+                  </div>
+
+                  {([
+                    ["audit_logging", "Audit Logging", "Record actions in the activity feed"],
+                    ["force_https", "Force HTTPS", "Mark the session cookie Secure (HTTPS only)"],
+                  ] as const).map(([key, label, desc]) => (
                     <div
-                      key={item.label}
+                      key={key}
                       className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0"
                     >
                       <div>
-                        <p className="text-sm font-medium text-slate-700">
-                          {item.label}
-                        </p>
-                        <p className="text-xs text-slate-400">{item.desc}</p>
+                        <p className="text-sm font-medium text-slate-700">{label}</p>
+                        <p className="text-xs text-slate-400">{desc}</p>
                       </div>
-                      {"enabled" in item ? (
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            defaultChecked={item.enabled}
-                            className="sr-only peer"
-                          />
-                          <div className="w-10 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
-                      ) : (
-                        <span className="text-sm font-medium text-slate-600 bg-slate-100 px-2 py-1 rounded">
-                          {item.value}
-                        </span>
-                      )}
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(sys[key])}
+                          onChange={(e) => setS(key, e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-10 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                      </label>
                     </div>
                   ))}
                 </CardContent>

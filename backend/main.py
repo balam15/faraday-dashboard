@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from models import (
     init_db, get_db, SessionLocal, User, SystemConfig, LdapConfig,
@@ -13,6 +13,8 @@ from models import (
 from auth import hash_password, verify_password, create_access_token, decode_token
 from ldap_auth import ldap_authenticate, resolve_role_from_groups
 import permissions
+import settings_store
+import mailer
 
 from fastapi.openapi.docs import get_redoc_html
 
@@ -73,20 +75,28 @@ def _extract_token(request: Request) -> str:
 
 
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
-_COOKIE_MAX_AGE = int(os.environ.get("TOKEN_EXPIRE_MINUTES", "480")) * 60
 
 
-def _set_auth_cookie(response: Response, token: str) -> None:
-    """Store the JWT in an httpOnly cookie so it's out of reach of JS/XSS."""
+def _issue_session(response: Response, db: Session, user: User) -> str:
+    """Create a JWT with the configured lifetime and set it as an httpOnly
+    cookie. Honors the Security settings (session timeout, force HTTPS)."""
+    st = settings_store.get_settings(db)
+    minutes = int(st.get("session_timeout_minutes") or 480)
+    secure = _COOKIE_SECURE or bool(st.get("force_https"))
+    token = create_access_token(
+        {"sub": user.username, "role": user.role},
+        expires_delta=timedelta(minutes=minutes),
+    )
     response.set_cookie(
         key="faraday_token",
         value=token,
-        max_age=_COOKIE_MAX_AGE,
+        max_age=minutes * 60,
         httponly=True,
         samesite="lax",
-        secure=_COOKIE_SECURE,
+        secure=secure,
         path="/",
     )
+    return token
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -119,8 +129,11 @@ def require_permission(perm: str):
 
 
 def record_activity(db: Session, kind: str, message: str, actor: Optional[str] = None) -> None:
-    """Append an event to the dashboard activity feed. Best-effort."""
+    """Append an event to the dashboard activity feed. Best-effort, and only
+    when Audit Logging is enabled in Settings → Security."""
     try:
+        if not settings_store.get_settings(db).get("audit_logging", True):
+            return
         db.add(Activity(kind=kind, message=message[:512], actor=actor))
         db.commit()
     except Exception:
@@ -222,8 +235,7 @@ def first_run_setup(body: SetupRequest, response: Response, db: Session = Depend
     db.add(SystemConfig(key="first_run_complete", value="true"))
     db.commit()
 
-    token = create_access_token({"sub": admin.username, "role": admin.role})
-    _set_auth_cookie(response, token)
+    token = _issue_session(response, db, admin)
     return TokenResponse(
         access_token=token,
         user={"username": admin.username, "role": admin.role, "auth_type": "local"},
@@ -280,9 +292,17 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
     if is_first_run(db):
         raise HTTPException(status_code=403, detail="Setup required")
 
+    st = settings_store.get_settings(db)
     mode = (body.auth_type or "auto").lower()
-    user: Optional[User] = None
 
+    # Account lockout (Security setting) — checked against the local account.
+    local_user = db.query(User).filter(User.username == body.username).first()
+    now = datetime.utcnow()
+    if local_user and local_user.locked_until and local_user.locked_until > now:
+        mins = max(1, int((local_user.locked_until - now).total_seconds() // 60) + 1)
+        raise HTTPException(status_code=429, detail=f"Account locked. Try again in {mins} minute(s).")
+
+    user: Optional[User] = None
     # Try local first (no network round-trip), then LDAP — so the login form
     # needs no "local vs AD" choice.
     if mode in ("auto", "local"):
@@ -291,13 +311,24 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
         user = _try_ldap_login(db, body.username, body.password)
 
     if user is None:
+        # Count the failed attempt against a known local account and lock it
+        # once the configured threshold is reached.
+        max_attempts = int(st.get("max_login_attempts") or 0)
+        if local_user and max_attempts > 0:
+            local_user.failed_login_attempts = (local_user.failed_login_attempts or 0) + 1
+            if local_user.failed_login_attempts >= max_attempts:
+                local_user.locked_until = now + timedelta(minutes=int(st.get("lockout_minutes") or 15))
+                local_user.failed_login_attempts = 0
+            db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    user.last_login = datetime.utcnow()
+    # Success — clear any lockout counters and stamp last login.
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login = now
     db.commit()
 
-    token = create_access_token({"sub": user.username, "role": user.role})
-    _set_auth_cookie(response, token)
+    token = _issue_session(response, db, user)
     return TokenResponse(
         access_token=token,
         user={
@@ -351,6 +382,26 @@ def list_activity(
         }
         for r in rows
     ]
+
+
+# ─────────────────────────────────────────────
+# Routes: System settings (Security + Notifications)
+# ─────────────────────────────────────────────
+
+@app.get("/api/settings")
+def get_settings(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
+    return settings_store.public_settings(db)
+
+
+@app.put("/api/settings")
+def put_settings(
+    body: dict,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_permission("manage_settings")),
+):
+    settings_store.save_settings(db, body or {})
+    record_activity(db, "settings", "Updated system settings", actor=actor.username)
+    return settings_store.public_settings(db)
 
 
 # ─────────────────────────────────────────────
@@ -702,7 +753,7 @@ def health():
 # ══════════════════════════════════════════════════════════════════
 # Scan data: applications, tags, scans, findings, import, API keys
 # ══════════════════════════════════════════════════════════════════
-from fastapi import UploadFile, File, Form, Header
+from fastapi import UploadFile, File, Form, Header, BackgroundTasks
 
 from models import Application, ImageTag, Scan, Finding, ApiKey
 import parsers
@@ -893,6 +944,7 @@ async def import_scan(
     scanner: Optional[str] = Form(None),
     app_type: str = Form("service"),
     team: str = Form(""),
+    background: BackgroundTasks = None,
     db: Session = Depends(get_db),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -926,6 +978,23 @@ async def import_scan(
         f"— {len(result.findings)} findings ({via})",
         actor=identity,
     )
+
+    # Notification email (best-effort, in the background).
+    st = settings_store.get_settings(db)
+    crit = sum(1 for f in result.findings if f.severity == "critical")
+    high = sum(1 for f in result.findings if f.severity == "high")
+    notify = (st.get("notify_new_critical") and crit) or (st.get("notify_new_high") and high)
+    if notify and background is not None:
+        subject = f"[Faraday] {app_name.strip()}:{tag.strip()} — {crit} critical, {high} high ({scan.scanner})"
+        bodylines = [
+            f"Scan imported: {scan.scanner} ({scan.scan_type})",
+            f"Application: {app_name.strip()}",
+            f"Image tag: {tag.strip()}",
+            f"Findings: {len(result.findings)} total — {crit} critical, {high} high",
+            f"Imported {via} by {identity}.",
+        ]
+        background.add_task(mailer.send_email, st, subject, "\n".join(bodylines))
+
     return {
         "ok": True,
         "imported_by": identity,
