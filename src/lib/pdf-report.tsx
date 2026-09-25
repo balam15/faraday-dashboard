@@ -240,18 +240,22 @@ const styles = StyleSheet.create({
   // ---- Section header ----
   sectionHeader: {
     marginBottom: 16,
-    paddingBottom: 8,
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.yellow,
+    backgroundColor: COLORS.navy,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.yellow,
+    borderRadius: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontFamily: 'Helvetica-Bold',
-    color: COLORS.navy,
+    color: COLORS.white,
+    letterSpacing: 0.3,
   },
   sectionSubtitle: {
     fontSize: 9,
-    color: COLORS.midGray,
+    color: COLORS.lightGray,
     marginTop: 2,
   },
 
