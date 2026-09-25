@@ -820,7 +820,7 @@ function CoverPage({ data }: { data: ReportData }) {
     <Page size="A4" style={styles.coverPage}>
       {/* Top navigation bar */}
       <View style={styles.coverTopBar}>
-        <Text style={styles.coverTopBarTitle}>FARADAY DASHBOARD</Text>
+        <Text style={styles.coverTopBarTitle}>INFRASHIELD DASHBOARD</Text>
         <Text style={styles.coverTopBarDate}>
           {formatDateTime(data.reportGeneratedAt)}
         </Text>
@@ -891,7 +891,7 @@ function CoverPage({ data }: { data: ReportData }) {
         <Text style={styles.coverConfidential}>
           CONFIDENTIAL — INTERNAL USE ONLY
         </Text>
-        <Text style={styles.coverOrgText}>Maybank Group · Security Engineering</Text>
+        <Text style={styles.coverOrgText}>Maybank Indonesia · Digital Infrastructure</Text>
       </View>
     </Page>
   );

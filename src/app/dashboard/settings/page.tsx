@@ -818,7 +818,7 @@ export default function SettingsPage() {
                         <Input
                           value={sys.smtp_from ?? ""}
                           onChange={(e) => setS("smtp_from", e.target.value)}
-                          placeholder="faraday@maybank.co.id"
+                          placeholder="infrashield@maybank.co.id"
                           className="border-slate-200"
                         />
                       </div>

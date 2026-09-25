@@ -79,7 +79,7 @@ function DownloadReportButton({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `faraday-report-${tagName}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `infrashield-report-${tagName}-${new Date().toISOString().slice(0, 10)}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
