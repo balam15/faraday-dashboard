@@ -1,0 +1,157 @@
+==============================================================================
+ InfraShield Dashboard — Panduan Setup
+ Maybank Indonesia · Digital Infrastructure
+==============================================================================
+
+Dashboard keamanan untuk mengumpulkan hasil scan (Trivy, Semgrep, MegaLinter/
+SARIF, Fortify) per aplikasi & service, per image tag. Satu image Docker berisi
+frontend (Next.js) + backend (FastAPI), dijalankan bareng lewat supervisord.
+Data disimpan di PostgreSQL.
+
+
+------------------------------------------------------------------------------
+1. PRASYARAT
+------------------------------------------------------------------------------
+- Docker terpasang & berjalan (cek: `docker version`)
+- Port 3000 bebas (atau set PORT lain, lihat bagian OPSI)
+
+
+------------------------------------------------------------------------------
+2. CARA CEPAT (build dari source)
+------------------------------------------------------------------------------
+Dari dalam folder project ini:
+
+    ./start.sh --build        # build image + jalankan PostgreSQL + app
+    # berikutnya cukup: ./start.sh   (rebuild hanya jika image belum ada)
+
+Buka:  http://localhost:3000
+Kunjungan pertama diarahkan ke /setup untuk membuat akun admin.
+
+Menghentikan:
+
+    ./stop.sh                 # hentikan container, DATA TETAP
+    ./stop.sh --purge         # hentikan + hapus semua data (volume)
+
+
+------------------------------------------------------------------------------
+3. JALANKAN DARI IMAGE DOCKER HUB (tanpa build)
+------------------------------------------------------------------------------
+    docker pull bigbo55ishere28/infrashield:1.0.0
+    IMAGE=bigbo55ishere28/infrashield:1.0.0 ./start.sh
+
+Atau manual tanpa script:
+
+    docker network create infrashield-net
+
+    docker run -d --name infrashield-db --network infrashield-net \
+      -e POSTGRES_USER=faraday -e POSTGRES_PASSWORD=ganti_password \
+      -e POSTGRES_DB=faraday \
+      -v infrashield-pgdata:/var/lib/postgresql/data \
+      postgres:16-alpine
+
+    docker run -d --name infrashield-app --network infrashield-net -p 3000:3000 \
+      -e DATABASE_URL="postgresql+psycopg://faraday:ganti_password@infrashield-db:5432/faraday" \
+      -e SECRET_KEY="isi_kunci_acak_panjang" \
+      -e COOKIE_SECURE=true \
+      -v infrashield-appdata:/data \
+      bigbo55ishere28/infrashield:1.0.0
+
+(Catatan: script start.sh memakai nama container faraday-app/faraday-db.
+ Perintah manual di atas memakai nama infrashield-* agar tidak bentrok.)
+
+
+------------------------------------------------------------------------------
+4. OPSI (environment variables untuk start.sh)
+------------------------------------------------------------------------------
+    PORT=8080 ./start.sh              # publish di port lain
+    COOKIE_SECURE=true ./start.sh     # WAJIB bila diakses via HTTPS / tunnel /
+                                      #   domain publik (cookie sesi jadi Secure)
+    POSTGRES_PASSWORD=xxx ./start.sh  # password DB (default: faraday)
+    SECRET_KEY=xxx ./start.sh         # kunci JWT; jika kosong dibuat otomatis &
+                                      #   disimpan di volume (sesi tahan restart)
+    USE_SQLITE=1 ./start.sh           # tanpa PostgreSQL (SQLite, untuk uji cepat)
+
+Migrasi database (Alembic) jalan otomatis saat container start.
+
+
+------------------------------------------------------------------------------
+5. SETUP AWAL & AKSES
+------------------------------------------------------------------------------
+1) Buka http://localhost:3000 -> halaman /setup -> buat akun admin.
+2) Login. Menu:
+   - Dashboard      : ringkasan + grafik
+   - Applications   : application -> service -> image tag -> scan
+   - Findings       : semua temuan (filter severity/status/scanner)
+   - Roles          : kelola user & role (khusus admin)
+   - Settings       : LDAP/AD, Notifications, Security, API Keys
+3) Dokumentasi API (Swagger/ReDoc): Settings -> API Keys -> tombol,
+   atau langsung http://localhost:3000/docs  dan  /redoc
+
+
+------------------------------------------------------------------------------
+6. IMPORT HASIL SCAN DARI CI/CD (Jenkins/GitLab, dll.)
+------------------------------------------------------------------------------
+1) Buat API Key: Settings -> API Keys -> Generate. Salin key-nya (frd_live_...).
+2) Kirim laporan tiap scanner dengan satu curl. Format scan_type:
+     - "Trivy Scan"           (file JSON)
+     - "Semgrep JSON Report"  (file JSON)
+     - "SARIF"                (file .sarif, mis. MegaLinter)
+     - "Fortify Scan"         (file .fpr)
+     - "ZAP Scan"             (file XML)
+
+Contoh:
+
+    curl -sS -X POST http://<host>:3000/api/import-scan \
+      -H "X-API-Key: frd_live_xxxxxxxx" \
+      -F "file=@trivy-report.json" \
+      -F "app_name=opsflow/sample-api" \
+      -F "tag=1.5.0" \
+      -F "scan_type=Trivy Scan" \
+      -F "team=DigitalInfra"
+
+Aturan:
+- app_name  = PROJECT/SERVICE  (mis. opsflow/sample-api). Prefix sebelum "/"
+              jadi "application", sisanya jadi "service".
+- tag       = image tag / versi build.
+- app_name sama + tag beda  -> service yang sama, image tag baru.
+- tag sama + scanner sama    -> menimpa (reimport), status triase dipertahankan.
+- tag sama + scanner beda    -> ditambahkan sebagai scan lain di tag itu.
+
+Tidak perlu langkah "prepare" seperti DefectDojo — app/service/tag dibuat
+otomatis saat import.
+
+
+------------------------------------------------------------------------------
+7. AKSES & ROLE
+------------------------------------------------------------------------------
+- Login otomatis mencoba akun lokal dulu, lalu LDAP/AD (jika dikonfigurasi di
+  Settings -> LDAP). Tidak ada pilihan manual di form login.
+- Role bawaan: admin > security_engineer > developer > viewer.
+  Admin bisa membuat role custom (Roles -> New Role) dengan izin tertentu.
+- User baru default TIDAK melihat aplikasi apa pun sampai diberi akses
+  (Roles -> Users -> Manage -> App access: All / Specific / None).
+
+
+------------------------------------------------------------------------------
+8. UPDATE VERSI
+------------------------------------------------------------------------------
+Dari source:
+    git pull
+    ./start.sh --build
+
+Dari Docker Hub:
+    docker pull bigbo55ishere28/infrashield:1.0.0
+    IMAGE=bigbo55ishere28/infrashield:1.0.0 ./start.sh
+Data tetap aman (tersimpan di volume PostgreSQL).
+
+
+------------------------------------------------------------------------------
+9. TROUBLESHOOTING
+------------------------------------------------------------------------------
+- Log aplikasi          : docker logs -f faraday-app
+- Data kosong via HTTPS  : jalankan dengan COOKIE_SECURE=true, lalu login ulang
+                           (tab incognito / hapus cookie lama).
+- Reset total            : ./stop.sh --purge   (menghapus SEMUA data)
+- Health check           : http://localhost:3000/api/health
+
+==============================================================================
