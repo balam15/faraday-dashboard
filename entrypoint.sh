@@ -23,7 +23,7 @@ export TOKEN_EXPIRE_MINUTES="${TOKEN_EXPIRE_MINUTES:-480}"
 export DATABASE_URL="${DATABASE_URL:-}"
 export COOKIE_SECURE="${COOKIE_SECURE:-false}"
 
-echo "Starting Faraday Dashboard..."
+echo "Starting InfraShield Dashboard..."
 echo "Data directory: /data"
 
 # ── Database migrations ──────────────────────────────────────────────

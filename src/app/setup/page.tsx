@@ -87,14 +87,14 @@ export default function SetupPage() {
 
           <div className="px-8 py-8">
             <div className="mb-7">
-              <MaybankLogo width={100} height={27} color="#000" className="mb-4" />
+              <MaybankLogo width={150} height={41} color="#000" className="mb-4" />
               <div className="flex items-center gap-2.5 mb-2">
                 <div className="p-2 bg-blue-50 rounded-xl">
                   <ShieldCheck className="h-5 w-5 text-blue-600" />
                 </div>
                 <div>
                   <h1 className="text-xl font-bold text-slate-800">Initial Setup</h1>
-                  <p className="text-xs text-slate-400">Faraday Dashboard · First Run</p>
+                  <p className="text-xs text-slate-400">InfraShield Dashboard · First Run</p>
                 </div>
               </div>
               <p className="text-sm text-slate-500 mt-3 leading-relaxed">
@@ -260,7 +260,7 @@ export default function SetupPage() {
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">
-          Faraday Dashboard v1.0.0
+          InfraShield Dashboard v1.0.0
         </p>
       </div>
     </div>

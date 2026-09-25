@@ -90,10 +90,10 @@ export function Sidebar() {
     <div className="flex flex-col w-64 bg-slate-900 text-slate-100 h-screen fixed left-0 top-0 z-30">
       {/* Logo */}
       <div className="flex flex-col gap-2 px-5 py-4 border-b border-slate-700/50">
-        <MaybankLogo width={100} height={27} color="#ffffff" />
+        <MaybankLogo width={150} height={41} color="#ffffff" />
         <div>
           <p className="font-semibold text-white text-sm leading-tight">
-            Faraday Dashboard
+            InfraShield Dashboard
           </p>
           <p className="text-[11px] text-slate-400">Security Scanning</p>
         </div>

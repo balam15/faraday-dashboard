@@ -20,7 +20,7 @@ from fastapi.openapi.docs import get_redoc_html
 
 # Disable the built-in ReDoc route so we can pin a stable CDN bundle below.
 # FastAPI's default points at redoc@next, which is frequently broken.
-app = FastAPI(title="Faraday Dashboard API", version="1.0.0", redoc_url=None)
+app = FastAPI(title="InfraShield Dashboard API", version="1.0.0", redoc_url=None)
 
 
 @app.get("/redoc", include_in_schema=False)
@@ -985,7 +985,7 @@ async def import_scan(
     high = sum(1 for f in result.findings if f.severity == "high")
     notify = (st.get("notify_new_critical") and crit) or (st.get("notify_new_high") and high)
     if notify and background is not None:
-        subject = f"[Faraday] {app_name.strip()}:{tag.strip()} — {crit} critical, {high} high ({scan.scanner})"
+        subject = f"[InfraShield] {app_name.strip()}:{tag.strip()} — {crit} critical, {high} high ({scan.scanner})"
         bodylines = [
             f"Scan imported: {scan.scanner} ({scan.scan_type})",
             f"Application: {app_name.strip()}",

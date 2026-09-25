@@ -100,8 +100,8 @@ export default function LoginPage() {
           <div className="px-8 py-8">
             {/* Logo + title */}
             <div className="mb-7">
-              <MaybankLogo width={100} height={27} color="#000" className="mb-4" />
-              <h1 className="text-xl font-bold text-slate-800">Faraday Dashboard</h1>
+              <MaybankLogo width={150} height={41} color="#000" className="mb-4" />
+              <h1 className="text-xl font-bold text-slate-800">InfraShield Dashboard</h1>
               <p className="text-sm text-slate-400 mt-0.5">Security Scanning Platform</p>
             </div>
 
@@ -175,7 +175,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">
-          Faraday Dashboard v1.0.0
+          InfraShield Dashboard v1.0.0
         </p>
       </div>
     </div>

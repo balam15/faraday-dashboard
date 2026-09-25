@@ -1176,9 +1176,9 @@ export function generateReportPDF(data: ReportData) {
   return (
     <Document
       title={`Security Scan Report — ${data.appName}`}
-      author="Faraday Dashboard"
+      author="InfraShield Dashboard"
       subject={`Security assessment for ${data.appName} ${data.imageTag}`}
-      creator="Faraday Security Dashboard"
+      creator="InfraShield Security Dashboard"
       producer="@react-pdf/renderer"
     >
       {/* 1. Cover Page */}

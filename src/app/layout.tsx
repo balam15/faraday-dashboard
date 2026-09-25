@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Faraday Dashboard",
+  title: "InfraShield Dashboard",
   description: "Security scanning dashboard — SAST, DAST, Image Scanning",
 };
 
