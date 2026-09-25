@@ -72,7 +72,10 @@ export function Sidebar() {
   }, []);
 
   const displayName = user?.display_name || user?.username || "";
-  const roleLabel = user ? ROLE_LABELS[user.role] ?? user.role : "";
+  const prettyRole = (r: string) =>
+    ROLE_LABELS[r] ??
+    r.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const roleLabel = user ? prettyRole(user.role) : "";
   const initials =
     displayName
       .split(" ")
