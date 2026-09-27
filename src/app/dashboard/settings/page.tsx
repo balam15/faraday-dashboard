@@ -7,6 +7,7 @@ import {
   useApiKeys,
   useApplications,
   useSystemSettings,
+  useRoles,
   saveLdapConfig,
   saveSystemSettings,
   testLdap,
@@ -45,7 +46,7 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type GroupRole = "Admin" | "Security Engineer" | "Developer" | "Viewer";
+type GroupRole = string; // a role name (system or custom), e.g. "security_engineer"
 
 interface GroupMapping {
   id: string;
@@ -56,19 +57,25 @@ interface GroupMapping {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const ROLE_OPTIONS: GroupRole[] = [
-  "Admin",
-  "Security Engineer",
-  "Developer",
-  "Viewer",
-];
-
-const ROLE_BADGE_STYLES: Record<GroupRole, string> = {
-  Admin: "bg-purple-100 text-purple-700 border-purple-200",
-  "Security Engineer": "bg-blue-100 text-blue-700 border-blue-200",
-  Developer: "bg-green-100 text-green-700 border-green-200",
-  Viewer: "bg-slate-100 text-slate-600 border-slate-200",
+// Badge styles keyed by canonical (snake_case) role name; custom roles fall
+// back to a neutral style.
+const ROLE_BADGE_STYLES: Record<string, string> = {
+  admin: "bg-purple-100 text-purple-700 border-purple-200",
+  security_engineer: "bg-blue-100 text-blue-700 border-blue-200",
+  developer: "bg-green-100 text-green-700 border-green-200",
+  viewer: "bg-slate-100 text-slate-600 border-slate-200",
 };
+
+function roleBadgeStyle(role: string): string {
+  return ROLE_BADGE_STYLES[role] ?? "bg-indigo-100 text-indigo-700 border-indigo-200";
+}
+
+function prettyRole(role: string): string {
+  return role
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 // ─── Tab config ──────────────────────────────────────────────────────────────
 
@@ -159,22 +166,25 @@ export default function SettingsPage() {
     if (ldapConfig.tls_verify !== undefined) setLdapTlsVerify(String(ldapConfig.tls_verify));
   }, [ldapConfig]);
 
+  // Roles (system + custom) for the mapping dropdown
+  const { roles } = useRoles();
+  const roleOptions = roles.map((r) => ({ value: r.name, label: prettyRole(r.name) }));
+
   // Group mapping state (seeded from backend)
   const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([]);
   const [newGroupDn, setNewGroupDn] = useState("");
-  const [newRole, setNewRole] = useState<GroupRole>("Developer");
+  const [newRole, setNewRole] = useState<GroupRole>("developer");
   const [newApps, setNewApps] = useState<string[]>([]);
   const [newAppsInput, setNewAppsInput] = useState("");
 
   useEffect(() => {
     setGroupMappings(
-      mappings.map((m) => {
-        const role =
-          (ROLE_OPTIONS.find(
-            (r) => r.toLowerCase().replace(/\s+/g, "_") === m.role.toLowerCase().replace(/\s+/g, "_"),
-          ) as GroupRole) || "Developer";
-        return { id: m.id, groupDn: m.group_dn, role, apps: m.apps ?? [] };
-      }),
+      mappings.map((m) => ({
+        id: m.id,
+        groupDn: m.group_dn,
+        role: (m.role || "").toLowerCase().replace(/\s+/g, "_"),
+        apps: m.apps ?? [],
+      })),
     );
   }, [mappings]);
 
@@ -247,7 +257,7 @@ export default function SettingsPage() {
     const dn = newGroupDn.trim();
     if (!dn) return;
 
-    const isAdmin = newRole === "Admin";
+    const isAdmin = newRole === "admin";
     const appsList = isAdmin ? [] : newApps.length > 0
       ? newApps
       : newAppsInput
@@ -267,13 +277,13 @@ export default function SettingsPage() {
     }
 
     setNewGroupDn("");
-    setNewRole("Developer");
+    setNewRole("developer");
     setNewApps([]);
     setNewAppsInput("");
   }
 
   function appsLabel(mapping: GroupMapping): string {
-    if (mapping.role === "Admin" || mapping.apps.length === 0) return "All Apps";
+    if (mapping.role === "admin" || mapping.apps.length === 0) return "All Apps";
     return mapping.apps.join(", ");
   }
 
@@ -527,15 +537,15 @@ export default function SettingsPage() {
                               </td>
                               <td className="px-4 py-3">
                                 <span
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
-                                    ROLE_BADGE_STYLES[mapping.role]
-                                  }`}
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(
+                                    mapping.role,
+                                  )}`}
                                 >
-                                  {mapping.role}
+                                  {prettyRole(mapping.role)}
                                 </span>
                               </td>
                               <td className="px-4 py-3">
-                                {mapping.role === "Admin" ||
+                                {mapping.role === "admin" ||
                                 mapping.apps.length === 0 ? (
                                   <Badge
                                     variant="outline"
@@ -599,16 +609,16 @@ export default function SettingsPage() {
                           <Select
                             value={newRole}
                             onValueChange={(v) =>
-                              setNewRole((v ?? "Developer") as GroupRole)
+                              setNewRole(v ?? "developer")
                             }
                           >
                             <SelectTrigger className="border-slate-200 bg-white">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {ROLE_OPTIONS.map((role) => (
-                                <SelectItem key={role} value={role}>
-                                  {role}
+                              {roleOptions.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>
+                                  {o.label}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -619,7 +629,7 @@ export default function SettingsPage() {
                           <Label className="text-sm font-medium text-slate-600">
                             Apps Access
                           </Label>
-                          {newRole === "Admin" ? (
+                          {newRole === "admin" ? (
                             <div className="flex items-center h-9 px-3 rounded-md border border-slate-200 bg-slate-100 text-sm text-slate-500">
                               All Apps (Admin role)
                             </div>
@@ -631,7 +641,7 @@ export default function SettingsPage() {
                               className="border-slate-200 bg-white text-sm"
                             />
                           )}
-                          {newRole !== "Admin" && (
+                          {newRole !== "admin" && (
                             <p className="text-xs text-slate-400">
                               Comma-separated or click below to select
                             </p>
@@ -640,7 +650,7 @@ export default function SettingsPage() {
                       </div>
 
                       {/* App chip multi-select (only when not Admin) */}
-                      {newRole !== "Admin" && (
+                      {newRole !== "admin" && (
                         <div className="space-y-1.5">
                           <Label className="text-xs font-medium text-slate-500">
                             Quick-select apps

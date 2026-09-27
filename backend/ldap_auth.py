@@ -119,21 +119,33 @@ def ldap_authenticate(
 
 
 def resolve_role_from_groups(groups: list[str], db: Session) -> Tuple[str, Optional[list]]:
-    """
-    Given list of group DNs, return the highest role and allowed apps.
-    Role priority: admin > security_engineer > developer > viewer
-    """
-    PRIORITY = {"admin": 4, "security_engineer": 3, "developer": 2, "viewer": 1}
-    best_role = "viewer"
-    best_apps = None  # None = all apps
+    """Given the user's AD group DNs, return the best matching role (system OR
+    custom) and its allowed apps.
 
-    mappings = db.query(LdapGroupMapping).all()
-    for mapping in mappings:
-        # Case-insensitive DN comparison
+    When several groups match, the role granting the most permissions wins
+    (admin, which holds everything, always ranks highest). If no group matches,
+    the user gets `viewer` with no app access until an admin grants some.
+    """
+    from models import Role
+
+    def normalize(name: str) -> str:
+        return (name or "").strip().lower().replace(" ", "_")
+
+    # permission-count per role name (admin => everything)
+    role_rank: dict = {}
+    for r in db.query(Role).all():
+        role_rank[r.name] = 10_000 if r.name == "admin" else len(r.permissions or [])
+
+    matched = []  # (rank, role_name, apps)
+    for mapping in db.query(LdapGroupMapping).all():
         if any(g.lower() == mapping.group_dn.lower() for g in groups):
-            role = mapping.role.lower().replace(" ", "_")
-            if PRIORITY.get(role, 0) > PRIORITY.get(best_role, 0):
-                best_role = role
-                best_apps = mapping.apps
+            role = normalize(mapping.role)
+            if role in role_rank:  # ignore mappings to roles that no longer exist
+                matched.append((role_rank[role], role, mapping.apps))
 
+    if not matched:
+        return "viewer", []  # deny-by-default: no app access until granted
+
+    matched.sort(key=lambda x: x[0], reverse=True)
+    _, best_role, best_apps = matched[0]
     return best_role, best_apps
