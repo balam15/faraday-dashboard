@@ -124,33 +124,31 @@ export function ImportScanDialog({ open, onClose, onImported }: ImportScanDialog
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-slate-600">Scanner type</Label>
-              <Select value={scanType} onValueChange={(v) => setScanType(v ?? "")}>
-                <SelectTrigger className="border-slate-200">
-                  <SelectValue placeholder="Select scanner" />
-                </SelectTrigger>
-                <SelectContent>
-                  {scanTypes.map((st) => (
-                    <SelectItem key={st} value={st}>
-                      {st}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-slate-600">
-                Team <span className="text-slate-400 font-normal">(optional)</span>
-              </Label>
-              <Input
-                value={team}
-                onChange={(e) => setTeam(e.target.value)}
-                placeholder="Platform"
-                className="border-slate-200"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-slate-600">Scanner type</Label>
+            <Select value={scanType} onValueChange={(v) => setScanType(v ?? "")}>
+              <SelectTrigger className="w-full border-slate-200">
+                <SelectValue placeholder="Select scanner" />
+              </SelectTrigger>
+              <SelectContent>
+                {scanTypes.map((st) => (
+                  <SelectItem key={st} value={st}>
+                    {st}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-slate-600">
+              Team <span className="text-slate-400 font-normal">(optional)</span>
+            </Label>
+            <Input
+              value={team}
+              onChange={(e) => setTeam(e.target.value)}
+              placeholder="Platform"
+              className="border-slate-200"
+            />
           </div>
 
           <div className="space-y-1.5">
