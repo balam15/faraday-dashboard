@@ -145,6 +145,7 @@ export default function SettingsPage() {
   }
 
   async function handleRevokeKey(id: string) {
+    if (!confirm("Revoke and remove this API key? Any CI/CD using it will stop working.")) return;
     try {
       await revokeApiKey(id);
     } finally {
@@ -239,6 +240,7 @@ export default function SettingsPage() {
   }
 
   async function handleDeleteMapping(id: string) {
+    if (!confirm("Delete this LDAP group mapping?")) return;
     setGroupMappings((prev) => prev.filter((m) => m.id !== id));
     try {
       await deleteGroupMapping(id);

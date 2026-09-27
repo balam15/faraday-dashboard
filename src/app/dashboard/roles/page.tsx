@@ -301,6 +301,8 @@ export default function RolesPage() {
   }
 
   async function handleDeleteUser(userId: string) {
+    const name = manageUser?.name ?? "this user";
+    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
     await deleteUser(userId);
     setManageUser(null);
     reloadUsers();
