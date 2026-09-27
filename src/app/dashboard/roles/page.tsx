@@ -16,6 +16,7 @@ import {
   createRole,
   deleteRole,
 } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   Select,
   SelectContent,
@@ -228,6 +229,7 @@ export default function RolesPage() {
   const { roles: apiRoles, reload: reloadRoles } = useRoles();
   const { me } = useMe();
   const canManageRoles = !!me?.permissions.includes("manage_roles");
+  const { confirm, ConfirmModal } = useConfirm();
 
   // Role options for the user dropdowns (system + custom).
   const roleOptions = useMemo(
@@ -302,7 +304,12 @@ export default function RolesPage() {
 
   async function handleDeleteUser(userId: string) {
     const name = manageUser?.name ?? "this user";
-    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: "Delete user?",
+      message: `"${name}" will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete user",
+    });
+    if (!ok) return;
     await deleteUser(userId);
     setManageUser(null);
     reloadUsers();
@@ -375,7 +382,13 @@ export default function RolesPage() {
     }
   }
 
-  async function handleDeleteRole(rawName: string) {
+  async function handleDeleteRole(rawName: string, label?: string) {
+    const ok = await confirm({
+      title: "Delete role?",
+      message: `Role "${label ?? rawName}" will be deleted.`,
+      confirmLabel: "Delete role",
+    });
+    if (!ok) return;
     try {
       await deleteRole(rawName);
       setSelectedRole(null);
@@ -553,9 +566,7 @@ export default function RolesPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (confirm(`Delete role "${role.name}"?`)) {
-                                handleDeleteRole(role.rawName ?? role.id);
-                              }
+                              handleDeleteRole(role.rawName ?? role.id, role.name);
                             }}
                             className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
                             title="Delete role"
@@ -1180,6 +1191,7 @@ export default function RolesPage() {
           </div>
         </DialogContent>
       </Dialog>
+      {ConfirmModal}
     </div>
   );
 }

@@ -18,6 +18,7 @@ import {
   type SystemSettings,
 } from "@/lib/api";
 import { Header } from "@/components/layout/header";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,6 +93,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("ldap");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { confirm, ConfirmModal } = useConfirm();
 
   // Live backend data
   const { config: ldapConfig } = useLdapConfig();
@@ -145,7 +147,12 @@ export default function SettingsPage() {
   }
 
   async function handleRevokeKey(id: string) {
-    if (!confirm("Revoke and remove this API key? Any CI/CD using it will stop working.")) return;
+    const ok = await confirm({
+      title: "Revoke API key?",
+      message: "The key will be removed. Any CI/CD pipeline using it will stop working.",
+      confirmLabel: "Revoke key",
+    });
+    if (!ok) return;
     try {
       await revokeApiKey(id);
     } finally {
@@ -240,7 +247,12 @@ export default function SettingsPage() {
   }
 
   async function handleDeleteMapping(id: string) {
-    if (!confirm("Delete this LDAP group mapping?")) return;
+    const ok = await confirm({
+      title: "Delete group mapping?",
+      message: "This LDAP group → role mapping will be removed.",
+      confirmLabel: "Delete mapping",
+    });
+    if (!ok) return;
     setGroupMappings((prev) => prev.filter((m) => m.id !== id));
     try {
       await deleteGroupMapping(id);
@@ -1073,6 +1085,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+      {ConfirmModal}
     </div>
   );
 }

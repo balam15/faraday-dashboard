@@ -8,6 +8,7 @@ import {
   type ScanResult,
 } from "@/lib/mock-data";
 import { useApplication, deleteApp, deleteTag } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -111,10 +112,16 @@ export default function ApplicationDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { application: app, loading, reload } = useApplication(params.id as string);
+  const { confirm, ConfirmModal } = useConfirm();
 
   async function handleDeleteApp() {
     if (!app) return;
-    if (!confirm(`Delete application "${app.name}" and all its scans?`)) return;
+    const ok = await confirm({
+      title: "Delete application?",
+      message: `"${app.name}" and all its image tags, scans, and findings will be permanently deleted.`,
+      confirmLabel: "Delete application",
+    });
+    if (!ok) return;
     try {
       await deleteApp(app.id);
       router.push("/dashboard/applications");
@@ -124,7 +131,12 @@ export default function ApplicationDetailPage() {
   }
 
   async function handleDeleteTag(tagId: string, tagName: string) {
-    if (!confirm(`Delete image tag "${tagName}" and its scans?`)) return;
+    const ok = await confirm({
+      title: "Delete image tag?",
+      message: `"${tagName}" and all its scans will be permanently deleted.`,
+      confirmLabel: "Delete tag",
+    });
+    if (!ok) return;
     try {
       await deleteTag(tagId);
       reload();
@@ -350,6 +362,7 @@ export default function ApplicationDetailPage() {
           </CardContent>
         </Card>
       </div>
+      {ConfirmModal}
     </div>
   );
 }
