@@ -761,26 +761,37 @@ def test_ldap_connection(
         raise HTTPException(status_code=400, detail=f"LDAP connection failed: {msg}{hint}")
 
 
-class VerifyUserIn(LdapDraft):
-    username: str
+class VerifyMappingIn(LdapDraft):
+    """Optional single username to spotlight; otherwise a sample is returned."""
+    username: Optional[str] = None
 
 
 @app.post("/api/ldap/verify-user")
-def verify_ldap_user(
-    body: VerifyUserIn,
+def verify_ldap_mapping(
+    body: VerifyMappingIn,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("manage_settings")),
 ):
-    """Resolve a single directory user (using the form values, no save needed)
-    and show the attributes + role they'd be granted."""
-    from ldap_auth import verify_user_mapping
+    """Run the LDAP config currently in the form (no save required) and return a
+    sample of the users it resolves, with their mapped attributes and role — so
+    the admin can confirm the connection + attribute mapping are correct.
 
-    uname = (body.username or "").strip()
-    if not uname:
-        raise HTTPException(status_code=400, detail="Enter a username to verify.")
+    If `username` is provided, only that user is returned (narrowed by it).
+    """
+    from ldap_auth import list_directory_users
+
     cfg = _effective_ldap_cfg(db, body)
+    uname = (body.username or "").strip()
+    # When a specific username is given, narrow the login filter to it so the
+    # sample contains just that user.
+    if uname:
+        from ldap_auth import escape_filter_chars
+        safe = escape_filter_chars(uname)
+        base = cfg.user_filter or f"({cfg.username_attr}={{username}})"
+        cfg.user_filter = base.replace("{username}", safe) if "{username}" in base else f"(&{base}({cfg.username_attr}={safe}))"
     try:
-        return {"ok": True, **verify_user_mapping(uname, db, cfg=cfg)}
+        users = list_directory_users(db, limit=50, cfg=cfg)
+        return {"ok": True, "users": users, "total": len(users)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

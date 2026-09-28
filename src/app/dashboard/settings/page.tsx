@@ -58,15 +58,15 @@ import {
   Building2,
 } from "lucide-react";
 import {
-  verifyLdapUser,
+  verifyLdapMapping,
   useCertificates,
   addCertificate,
   deleteCertificate,
   useDirectoryGroups,
   fetchGroupMembers,
-  type LdapUserMapping,
   type CertificateRow,
   type DirectoryMember,
+  type DirectoryUser,
 } from "@/lib/api";
 import { ManageUsersSection } from "./manage-users";
 import { ManageRolesSection } from "./manage-roles";
@@ -158,10 +158,9 @@ export default function SettingsPage() {
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testing, setTesting] = useState(false);
 
-  // Verify-user-mapping state (item: test a single LDAP user)
-  const [verifyUsername, setVerifyUsername] = useState("");
+  // Verify-mapping state: previews the users the current config resolves.
   const [verifying, setVerifying] = useState(false);
-  const [verifyResult, setVerifyResult] = useState<LdapUserMapping | null>(null);
+  const [verifyResult, setVerifyResult] = useState<DirectoryUser[] | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
 
@@ -338,15 +337,13 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleVerifyUser() {
-    const uname = verifyUsername.trim();
-    if (!uname) return;
+  async function handleVerifyMapping() {
     setVerifying(true);
     setVerifyResult(null);
     setVerifyError(null);
     try {
-      const res = await verifyLdapUser(uname, draftLdap());
-      setVerifyResult(res);
+      const res = await verifyLdapMapping(draftLdap());
+      setVerifyResult(res.users);
       setVerifyOpen(true);
     } catch (e) {
       setVerifyError(e instanceof Error ? e.message : "Verification failed");
@@ -908,31 +905,24 @@ export default function SettingsPage() {
                       Verify User Mapping
                     </CardTitle>
                     <p className="text-xs text-slate-500 mt-1">
-                      Look up a single directory user to confirm the search filter,
-                      attributes and the role they would be granted.
+                      Runs the connection and attribute mapping above and shows the
+                      users the directory returns — so you can confirm the mapping
+                      is right. No save required.
                     </p>
                   </CardHeader>
                   <CardContent className="px-6 pb-6 space-y-4">
-                    <div className="flex items-end gap-3">
-                      <div className="flex-1 space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          Username to test
-                        </Label>
-                        <Input
-                          value={verifyUsername}
-                          onChange={(e) => setVerifyUsername(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && handleVerifyUser()}
-                          placeholder="e.g. rahmat.hidayat"
-                          className="border-slate-200"
-                        />
-                      </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-400">
+                        Uses the values currently in the form (host, bind account,
+                        search filter and attribute mapping).
+                      </p>
                       <button
-                        onClick={handleVerifyUser}
-                        disabled={verifying || !verifyUsername.trim()}
-                        className="h-9 px-4 border border-slate-300 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+                        onClick={handleVerifyMapping}
+                        disabled={verifying}
+                        className="h-9 px-4 border border-slate-300 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 flex-shrink-0"
                       >
                         {verifying && <Loader2 className="h-4 w-4 animate-spin" />}
-                        {verifying ? "Resolving..." : "Verify User"}
+                        {verifying ? "Resolving..." : "Verify Mapping"}
                       </button>
                     </div>
 
@@ -948,7 +938,7 @@ export default function SettingsPage() {
                         onClick={() => setVerifyOpen(true)}
                         className="text-xs font-medium text-blue-600 hover:underline"
                       >
-                        Show last result for “{verifyResult.username}”
+                        Show last result ({verifyResult.length} users)
                       </button>
                     )}
                   </CardContent>
@@ -956,77 +946,61 @@ export default function SettingsPage() {
 
                 {/* Verify user — result popup */}
                 <Dialog open={verifyOpen} onOpenChange={setVerifyOpen}>
-                  <DialogContent className="max-w-lg">
+                  <DialogContent className="max-w-2xl">
                     <DialogHeader>
                       <DialogTitle className="flex items-center gap-2 text-base font-semibold text-slate-800">
                         <CheckCircle2 className="h-5 w-5 text-green-600" />
-                        User resolved from directory
+                        Users resolved from directory
+                        {verifyResult && (
+                          <span className="text-sm font-normal text-slate-400">
+                            ({verifyResult.length})
+                          </span>
+                        )}
                       </DialogTitle>
                     </DialogHeader>
-                    {verifyResult && (
-                      <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                        <div>
-                          <p className="text-xs text-slate-400">Display name</p>
-                          <p className="font-medium text-slate-800">
-                            {verifyResult.display_name || "—"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Username</p>
-                          <p className="font-mono text-slate-800">{verifyResult.username}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Email</p>
-                          <p className="text-slate-800">{verifyResult.email || "—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400">Resolved role</p>
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(
-                              verifyResult.resolved_role,
-                            )}`}
-                          >
-                            {prettyRole(verifyResult.resolved_role)}
-                          </span>
-                        </div>
-                        <div className="col-span-2">
-                          <p className="text-xs text-slate-400">Distinguished Name</p>
-                          <p className="font-mono text-xs text-slate-700 break-all">
-                            {verifyResult.dn}
-                          </p>
-                        </div>
-                        <div className="col-span-2">
-                          <p className="text-xs text-slate-400 mb-1">
-                            Group memberships ({verifyResult.groups.length})
-                          </p>
-                          <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
-                            {verifyResult.groups.length === 0 && (
-                              <span className="text-xs text-slate-400">No groups returned.</span>
-                            )}
-                            {verifyResult.groups.map((g) => (
-                              <Badge
-                                key={g}
-                                variant="outline"
-                                className="text-[10px] font-mono text-slate-600 border-slate-200 max-w-full truncate"
+                    <p className="text-xs text-slate-500">
+                      These are the users your current connection + attribute mapping
+                      return. Check the name, email and role columns look right.
+                    </p>
+                    <div className="mt-1 max-h-[55vh] overflow-y-auto rounded-xl border border-slate-200">
+                      {verifyResult && verifyResult.length === 0 ? (
+                        <p className="px-4 py-8 text-center text-sm text-slate-400">
+                          No users matched. Check the Base DN and User Search Filter.
+                        </p>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">User</th>
+                              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Email</th>
+                              <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Role</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(verifyResult || []).map((u, idx) => (
+                              <tr
+                                key={u.dn || u.username}
+                                className={`border-b border-slate-100 last:border-0 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}`}
                               >
-                                {g}
-                              </Badge>
+                                <td className="px-4 py-2.5">
+                                  <p className="font-medium text-slate-800">{u.display_name || u.username}</p>
+                                  <p className="text-xs text-slate-400 font-mono">{u.username}</p>
+                                </td>
+                                <td className="px-4 py-2.5 text-slate-600">{u.email || "—"}</td>
+                                <td className="px-4 py-2.5">
+                                  <span
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(u.resolved_role)}`}
+                                    title={`${u.groups_count} group memberships`}
+                                  >
+                                    {prettyRole(u.resolved_role)}
+                                  </span>
+                                </td>
+                              </tr>
                             ))}
-                          </div>
-                        </div>
-                        <div className="col-span-2">
-                          <p className="text-xs text-slate-400">App access</p>
-                          <p className="text-slate-800">
-                            {verifyResult.allowed_apps === null ||
-                            verifyResult.resolved_role === "admin"
-                              ? "All apps"
-                              : (verifyResult.allowed_apps || []).length === 0
-                              ? "No apps (granted by mapping)"
-                              : (verifyResult.allowed_apps || []).join(", ")}
-                          </p>
-                        </div>
-                      </div>
-                    )}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                     <div className="flex justify-end pt-2">
                       <button
                         onClick={() => setVerifyOpen(false)}

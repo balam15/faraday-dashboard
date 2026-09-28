@@ -293,13 +293,16 @@ def _entry_groups(entry) -> list[str]:
     return []
 
 
-def list_directory_users(db: Session, limit: int = 200) -> list[dict]:
+def list_directory_users(db: Session, limit: int = 200, cfg: Optional[LdapConfig] = None) -> list[dict]:
     """Enumerate the users allowed to sign in (the login filter), live from AD.
 
-    Returns each user's attributes plus the role they would be granted from
-    their group memberships. Read-only preview — no accounts are created.
+    `cfg` may be a transient (unsaved) config so an admin can preview the
+    result of the values currently in the form. Returns each user's attributes
+    plus the role they would be granted from their group memberships. Read-only
+    preview — no accounts are created.
     """
-    cfg = get_ldap_config(db)
+    if cfg is None:
+        cfg = get_ldap_config(db)
     conn = _connect(db, cfg)
     try:
         # Use the configured login filter so the list matches exactly who can

@@ -317,19 +317,15 @@ export function testLdap(draft?: LdapDraft) {
   return apiSend<{ ok: boolean; message: string }>("/api/ldap/test", "POST", draft ?? {});
 }
 
-export interface LdapUserMapping {
-  ok: boolean;
-  dn: string;
-  username: string;
-  email: string;
-  display_name: string;
-  groups: string[];
-  resolved_role: string;
-  allowed_apps: string[] | null;
-}
-
-export function verifyLdapUser(username: string, draft?: LdapDraft) {
-  return apiSend<LdapUserMapping>("/api/ldap/verify-user", "POST", { username, ...(draft ?? {}) });
+// Runs the current LDAP form config and returns a sample of resolved users
+// (with mapped attributes + role) so the admin can confirm the mapping — no
+// username required. An optional username narrows the result to one user.
+export function verifyLdapMapping(draft?: LdapDraft, username?: string) {
+  return apiSend<{ ok: boolean; users: DirectoryUser[]; total: number }>(
+    "/api/ldap/verify-user",
+    "POST",
+    { ...(draft ?? {}), ...(username ? { username } : {}) },
+  );
 }
 
 // ── Live directory browsing (users + groups read straight from AD) ──
