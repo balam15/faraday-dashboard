@@ -35,14 +35,18 @@ def build_tls(db: Session, cfg: LdapConfig) -> Optional[Tls]:
     return Tls(validate=ssl.CERT_REQUIRED, ca_certs_data=ca_data)
 
 
-def verify_user_mapping(username: str, db: Session) -> dict:
+def verify_user_mapping(username: str, db: Session, cfg: Optional[LdapConfig] = None) -> dict:
     """Look a user up in the directory (service-account bind, no password
     check) and report the attributes and the role they would be granted.
+
+    `cfg` may be a transient (unsaved) config so the admin can verify against
+    the values currently in the form. Falls back to the saved config.
 
     Raises ValueError with a human-readable message on any failure so the
     UI can explain exactly what went wrong.
     """
-    cfg = get_ldap_config(db)
+    if cfg is None:
+        cfg = get_ldap_config(db)
     if not cfg or not cfg.host:
         raise ValueError("LDAP is not configured yet. Fill in the connection details and save first.")
     if not cfg.bind_dn or not cfg.bind_password:

@@ -310,8 +310,11 @@ export function saveLdapConfig(cfg: LdapConfig & { bind_password?: string }) {
   return apiSend("/api/ldap/config", "PUT", cfg);
 }
 
-export function testLdap() {
-  return apiSend<{ ok: boolean; message: string }>("/api/ldap/test", "POST");
+// The unsaved form values, sent so Test / Verify work before saving.
+export type LdapDraft = LdapConfig & { bind_password?: string };
+
+export function testLdap(draft?: LdapDraft) {
+  return apiSend<{ ok: boolean; message: string }>("/api/ldap/test", "POST", draft ?? {});
 }
 
 export interface LdapUserMapping {
@@ -325,8 +328,8 @@ export interface LdapUserMapping {
   allowed_apps: string[] | null;
 }
 
-export function verifyLdapUser(username: string) {
-  return apiSend<LdapUserMapping>("/api/ldap/verify-user", "POST", { username });
+export function verifyLdapUser(username: string, draft?: LdapDraft) {
+  return apiSend<LdapUserMapping>("/api/ldap/verify-user", "POST", { username, ...(draft ?? {}) });
 }
 
 // ── Live directory browsing (users + groups read straight from AD) ──

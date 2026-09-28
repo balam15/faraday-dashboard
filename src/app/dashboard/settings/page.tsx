@@ -20,6 +20,12 @@ import {
 import { Header } from "@/components/layout/header";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -157,6 +163,7 @@ export default function SettingsPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<LdapUserMapping | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verifyOpen, setVerifyOpen] = useState(false);
 
   // Certificate import state
   const [certName, setCertName] = useState("");
@@ -261,24 +268,43 @@ export default function SettingsPage() {
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
+  // Current LDAP form values, so Test / Verify work before saving.
+  function draftLdap() {
+    return {
+      host: ldapHost,
+      port: Number(ldapPort) || 636,
+      base_dn: ldapBaseDn,
+      bind_dn: ldapBindDn,
+      user_filter: ldapUserFilter || undefined,
+      username_attr: ldapUsernameAttr,
+      email_attr: ldapEmailAttr,
+      display_name_attr: ldapDisplayNameAttr,
+      tls_verify: ldapTlsVerify === "true",
+      use_ssl: ldapHost.startsWith("ldaps://") || ldapPort === "636",
+      ...(ldapBindPassword ? { bind_password: ldapBindPassword } : {}),
+    };
+  }
+
+  const [ldapSaveError, setLdapSaveError] = useState<string | null>(null);
+
   async function handleSave() {
     setSaving(true);
     try {
       if (activeTab === "ldap") {
-        await saveLdapConfig({
-          host: ldapHost,
-          port: Number(ldapPort) || 636,
-          base_dn: ldapBaseDn,
-          bind_dn: ldapBindDn,
-          user_filter: ldapUserFilter || undefined,
-          username_attr: ldapUsernameAttr,
-          email_attr: ldapEmailAttr,
-          display_name_attr: ldapDisplayNameAttr,
-          tls_verify: ldapTlsVerify === "true",
-          use_ssl: ldapHost.startsWith("ldaps://") || ldapPort === "636",
-          // Only send the password when the admin actually typed one.
-          ...(ldapBindPassword ? { bind_password: ldapBindPassword } : {}),
-        });
+        // Block saving an empty / half-filled configuration.
+        const missing = [
+          [ldapHost, "LDAP Host"],
+          [ldapBaseDn, "Base DN"],
+          [ldapBindDn, "Bind DN"],
+        ].filter(([v]) => !String(v).trim()).map(([, l]) => l);
+        if (!ldapBindPassword.trim() && !ldapConfig?.host) missing.push("Bind Password");
+        if (missing.length) {
+          setLdapSaveError("Please fill in: " + missing.join(", ") + ".");
+          setSaving(false);
+          return;
+        }
+        setLdapSaveError(null);
+        await saveLdapConfig(draftLdap());
       } else {
         // Notifications / Security / API tabs all persist system settings.
         await saveSystemSettings({
@@ -301,7 +327,7 @@ export default function SettingsPage() {
     setTestResult(null);
     setTestOk(null);
     try {
-      const res = await testLdap();
+      const res = await testLdap(draftLdap());
       setTestResult(res.message || "Connection successful");
       setTestOk(true);
     } catch (e) {
@@ -319,8 +345,9 @@ export default function SettingsPage() {
     setVerifyResult(null);
     setVerifyError(null);
     try {
-      const res = await verifyLdapUser(uname);
+      const res = await verifyLdapUser(uname, draftLdap());
       setVerifyResult(res);
+      setVerifyOpen(true);
     } catch (e) {
       setVerifyError(e instanceof Error ? e.message : "Verification failed");
     } finally {
@@ -916,86 +943,100 @@ export default function SettingsPage() {
                       </div>
                     )}
 
-                    {verifyResult && (
-                      <div className="rounded-xl border border-slate-200 overflow-hidden">
-                        <div className="flex items-center gap-2 bg-green-50 border-b border-green-100 px-4 py-2.5">
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-sm font-medium text-green-700">
-                            User resolved successfully
-                          </span>
-                        </div>
-                        <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                          <div>
-                            <p className="text-xs text-slate-400">Display name</p>
-                            <p className="font-medium text-slate-800">
-                              {verifyResult.display_name || "—"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Username</p>
-                            <p className="font-mono text-slate-800">
-                              {verifyResult.username}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Email</p>
-                            <p className="text-slate-800">
-                              {verifyResult.email || "—"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Resolved role</p>
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(
-                                verifyResult.resolved_role,
-                              )}`}
-                            >
-                              {prettyRole(verifyResult.resolved_role)}
-                            </span>
-                          </div>
-                          <div className="col-span-2">
-                            <p className="text-xs text-slate-400">Distinguished Name</p>
-                            <p className="font-mono text-xs text-slate-700 break-all">
-                              {verifyResult.dn}
-                            </p>
-                          </div>
-                          <div className="col-span-2">
-                            <p className="text-xs text-slate-400 mb-1">
-                              Group memberships ({verifyResult.groups.length})
-                            </p>
-                            <div className="flex flex-wrap gap-1">
-                              {verifyResult.groups.length === 0 && (
-                                <span className="text-xs text-slate-400">
-                                  No groups returned.
-                                </span>
-                              )}
-                              {verifyResult.groups.map((g) => (
-                                <Badge
-                                  key={g}
-                                  variant="outline"
-                                  className="text-[10px] font-mono text-slate-600 border-slate-200 max-w-full truncate"
-                                >
-                                  {g}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="col-span-2">
-                            <p className="text-xs text-slate-400">App access</p>
-                            <p className="text-slate-800">
-                              {verifyResult.allowed_apps === null ||
-                              verifyResult.resolved_role === "admin"
-                                ? "All apps"
-                                : (verifyResult.allowed_apps || []).length === 0
-                                ? "No apps (granted by mapping)"
-                                : (verifyResult.allowed_apps || []).join(", ")}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
+                    {verifyResult && !verifyOpen && (
+                      <button
+                        onClick={() => setVerifyOpen(true)}
+                        className="text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Show last result for “{verifyResult.username}”
+                      </button>
                     )}
                   </CardContent>
                 </Card>
+
+                {/* Verify user — result popup */}
+                <Dialog open={verifyOpen} onOpenChange={setVerifyOpen}>
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2 text-base font-semibold text-slate-800">
+                        <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        User resolved from directory
+                      </DialogTitle>
+                    </DialogHeader>
+                    {verifyResult && (
+                      <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                        <div>
+                          <p className="text-xs text-slate-400">Display name</p>
+                          <p className="font-medium text-slate-800">
+                            {verifyResult.display_name || "—"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Username</p>
+                          <p className="font-mono text-slate-800">{verifyResult.username}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Email</p>
+                          <p className="text-slate-800">{verifyResult.email || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Resolved role</p>
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(
+                              verifyResult.resolved_role,
+                            )}`}
+                          >
+                            {prettyRole(verifyResult.resolved_role)}
+                          </span>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-xs text-slate-400">Distinguished Name</p>
+                          <p className="font-mono text-xs text-slate-700 break-all">
+                            {verifyResult.dn}
+                          </p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-xs text-slate-400 mb-1">
+                            Group memberships ({verifyResult.groups.length})
+                          </p>
+                          <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+                            {verifyResult.groups.length === 0 && (
+                              <span className="text-xs text-slate-400">No groups returned.</span>
+                            )}
+                            {verifyResult.groups.map((g) => (
+                              <Badge
+                                key={g}
+                                variant="outline"
+                                className="text-[10px] font-mono text-slate-600 border-slate-200 max-w-full truncate"
+                              >
+                                {g}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-xs text-slate-400">App access</p>
+                          <p className="text-slate-800">
+                            {verifyResult.allowed_apps === null ||
+                            verifyResult.resolved_role === "admin"
+                              ? "All apps"
+                              : (verifyResult.allowed_apps || []).length === 0
+                              ? "No apps (granted by mapping)"
+                              : (verifyResult.allowed_apps || []).join(", ")}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={() => setVerifyOpen(false)}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </>
             )}
 
@@ -1541,6 +1582,12 @@ export default function SettingsPage() {
                 Users, Certificates and API Keys manage themselves inline. */}
             {!["users", "roles", "certs", "api"].includes(activeTab) && (
               <div className="flex items-center justify-end gap-3 pt-2">
+                {activeTab === "ldap" && ldapSaveError && (
+                  <span className="flex items-center gap-1.5 text-sm text-red-600">
+                    <XCircle className="h-4 w-4" />
+                    {ldapSaveError}
+                  </span>
+                )}
                 {saved && (
                   <span className="flex items-center gap-1.5 text-sm text-green-600">
                     <CheckCircle2 className="h-4 w-4" />

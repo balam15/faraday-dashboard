@@ -634,7 +634,26 @@ def save_ldap_config(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("manage_settings")),
 ):
-    cfg = db.query(LdapConfig).filter(LdapConfig.id == 1).first()
+    # Don't allow saving an empty / half-filled configuration.
+    missing = [
+        label for value, label in (
+            (body.host, "LDAP Host"),
+            (body.base_dn, "Base DN"),
+            (body.bind_dn, "Bind DN (service account)"),
+        )
+        if not (value or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Please fill in: " + ", ".join(missing) + ".",
+        )
+    existing = db.query(LdapConfig).filter(LdapConfig.id == 1).first()
+    # A password is required the first time (there's nothing saved to reuse).
+    if not (body.bind_password or "").strip() and not (existing and existing.bind_password):
+        raise HTTPException(status_code=400, detail="Please enter the Bind Password.")
+
+    cfg = existing
     if not cfg:
         cfg = LdapConfig(id=1)
         db.add(cfg)
@@ -655,21 +674,73 @@ def save_ldap_config(
     return {"ok": True}
 
 
+class LdapDraft(BaseModel):
+    """The LDAP form values, used to test / verify BEFORE saving. All optional;
+    anything omitted falls back to the currently saved config."""
+    host: Optional[str] = None
+    port: Optional[int] = None
+    base_dn: Optional[str] = None
+    bind_dn: Optional[str] = None
+    bind_password: Optional[str] = None
+    user_filter: Optional[str] = None
+    username_attr: Optional[str] = None
+    email_attr: Optional[str] = None
+    display_name_attr: Optional[str] = None
+    tls_verify: Optional[bool] = None
+    use_ssl: Optional[bool] = None
+
+
+def _effective_ldap_cfg(db: Session, draft: Optional[LdapDraft]) -> LdapConfig:
+    """Build a transient (unsaved) LdapConfig from the draft form values merged
+    over the saved config. The bind password falls back to the stored one when
+    the admin didn't re-type it, so testing an existing connection still works."""
+    saved = db.query(LdapConfig).filter(LdapConfig.id == 1).first()
+
+    def pick(field, default=None):
+        if draft is not None:
+            v = getattr(draft, field, None)
+            if v is not None and v != "":
+                return v
+        return getattr(saved, field, None) if saved else default
+
+    cfg = LdapConfig(
+        id=1,
+        host=pick("host"),
+        port=pick("port", 636) or 636,
+        base_dn=pick("base_dn"),
+        bind_dn=pick("bind_dn"),
+        bind_password=pick("bind_password"),
+        user_filter=pick("user_filter"),
+        username_attr=pick("username_attr", "sAMAccountName") or "sAMAccountName",
+        email_attr=pick("email_attr", "mail") or "mail",
+        display_name_attr=pick("display_name_attr", "displayName") or "displayName",
+        # Booleans: prefer the draft's explicit value, else saved, else default.
+        tls_verify=(draft.tls_verify if draft and draft.tls_verify is not None
+                    else (saved.tls_verify if saved else True)),
+        use_ssl=(draft.use_ssl if draft and draft.use_ssl is not None
+                 else (saved.use_ssl if saved else True)),
+    )
+    return cfg
+
+
 @app.post("/api/ldap/test")
-def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
-    from ldap_auth import get_ldap_config as _get_cfg, build_tls
+def test_ldap_connection(
+    body: Optional[LdapDraft] = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("manage_settings")),
+):
+    """Bind test using the values in the form (no save required). Falls back to
+    the saved config for anything left blank (e.g. the bind password)."""
+    from ldap_auth import build_tls
     from ldap3 import Server, Connection, ALL
 
-    cfg = _get_cfg(db)
-    if not cfg or not cfg.host:
-        raise HTTPException(
-            status_code=400,
-            detail="LDAP is not configured yet. Fill in the connection details above and click Save first.",
-        )
+    cfg = _effective_ldap_cfg(db, body)
+    if not cfg.host:
+        raise HTTPException(status_code=400, detail="Enter an LDAP host before testing.")
     if not cfg.bind_dn or not cfg.bind_password:
         raise HTTPException(
             status_code=400,
-            detail="No service account is set. Enter a Bind DN and password, then Save before testing.",
+            detail="Enter a service account Bind DN and password before testing.",
         )
     try:
         tls = build_tls(db, cfg)
@@ -690,7 +761,7 @@ def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(requir
         raise HTTPException(status_code=400, detail=f"LDAP connection failed: {msg}{hint}")
 
 
-class VerifyUserIn(BaseModel):
+class VerifyUserIn(LdapDraft):
     username: str
 
 
@@ -700,14 +771,16 @@ def verify_ldap_user(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("manage_settings")),
 ):
-    """Resolve a single directory user and show the role they'd be granted."""
+    """Resolve a single directory user (using the form values, no save needed)
+    and show the attributes + role they'd be granted."""
     from ldap_auth import verify_user_mapping
 
     uname = (body.username or "").strip()
     if not uname:
         raise HTTPException(status_code=400, detail="Enter a username to verify.")
+    cfg = _effective_ldap_cfg(db, body)
     try:
-        return {"ok": True, **verify_user_mapping(uname, db)}
+        return {"ok": True, **verify_user_mapping(uname, db, cfg=cfg)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
