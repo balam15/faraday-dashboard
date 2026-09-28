@@ -49,7 +49,13 @@ def _open_counts(findings) -> dict:
     return scoring.count_severities(f.severity for f in findings if f.status == _OPEN)
 
 
+# Finding statuses that count as "resolved" for the per-scan progress metric.
+_RESOLVED = {"mitigated", "false_positive", "accepted"}
+
+
 def scan_dict(s: Scan) -> dict:
+    total = len(s.findings)
+    resolved = sum(1 for f in s.findings if f.status in _RESOLVED)
     return {
         "id": s.id,
         "scanner": s.scanner,
@@ -58,6 +64,9 @@ def scan_dict(s: Scan) -> dict:
         "scannedAt": iso(s.scanned_at),
         "status": s.status,
         "findings": _counts(s.findings),
+        "total": total,
+        "resolved": resolved,
+        "resolvedPct": round(100 * resolved / total) if total else 0,
     }
 
 

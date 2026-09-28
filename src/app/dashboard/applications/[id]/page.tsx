@@ -7,7 +7,7 @@ import {
   getRiskBadgeClass,
   type ScanResult,
 } from "@/lib/mock-data";
-import { useApplication, deleteApp, deleteTag } from "@/lib/api";
+import { useApplication, useMe, deleteApp, deleteTag } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -112,6 +112,8 @@ export default function ApplicationDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { application: app, loading, reload } = useApplication(params.id as string);
+  const { me } = useMe();
+  const canManageApps = !!me?.permissions.includes("manage_applications");
   const { confirm, ConfirmModal } = useConfirm();
 
   async function handleDeleteApp() {
@@ -173,13 +175,15 @@ export default function ApplicationDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Back to Applications
           </Link>
-          <button
-            onClick={handleDeleteApp}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg transition-colors"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete Application
-          </button>
+          {canManageApps && (
+            <button
+              onClick={handleDeleteApp}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Application
+            </button>
+          )}
         </div>
 
         {/* App summary */}
@@ -293,13 +297,15 @@ export default function ApplicationDetailPage() {
                       tagName={imageTag.tag}
                     />
                     {/* Delete tag */}
-                    <button
-                      onClick={() => handleDeleteTag(imageTag.id, imageTag.tag)}
-                      className="flex items-center justify-center h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Delete this image tag"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {canManageApps && (
+                      <button
+                        onClick={() => handleDeleteTag(imageTag.id, imageTag.tag)}
+                        className="flex items-center justify-center h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete this image tag"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -336,9 +342,25 @@ export default function ApplicationDetailPage() {
                             {scan.format}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Scanned {formatDate(scan.scannedAt)}
-                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-xs text-slate-400">
+                            Scanned {formatDate(scan.scannedAt)}
+                          </p>
+                          {(scan.total ?? 0) > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700"
+                              title={`${scan.resolved ?? 0} of ${scan.total ?? 0} findings resolved`}
+                            >
+                              <span className="h-1.5 w-8 rounded-full bg-slate-100 overflow-hidden">
+                                <span
+                                  className="block h-full rounded-full bg-emerald-500"
+                                  style={{ width: `${scan.resolvedPct ?? 0}%` }}
+                                />
+                              </span>
+                              {scan.resolvedPct ?? 0}% resolved
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <SeverityCounts
                         critical={scan.findings.critical}

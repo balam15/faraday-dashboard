@@ -36,6 +36,7 @@ import {
   ShieldCheck,
   Save,
   CheckCircle2,
+  XCircle,
   KeyRound,
   Loader2,
   Trash2,
@@ -43,7 +44,26 @@ import {
   Users,
   BookOpen,
   ExternalLink,
+  UserCog,
+  FileKey,
+  UserSearch,
+  FolderTree,
+  ChevronRight,
+  Building2,
 } from "lucide-react";
+import {
+  verifyLdapUser,
+  useCertificates,
+  addCertificate,
+  deleteCertificate,
+  useDirectoryGroups,
+  fetchGroupMembers,
+  type LdapUserMapping,
+  type CertificateRow,
+  type DirectoryMember,
+} from "@/lib/api";
+import { ManageUsersSection } from "./manage-users";
+import { ManageRolesSection } from "./manage-roles";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +102,9 @@ function prettyRole(role: string): string {
 
 const tabs = [
   { id: "ldap", label: "LDAP / AD", icon: Server },
+  { id: "users", label: "Manage Users", icon: UserCog },
+  { id: "roles", label: "Manage Roles", icon: ShieldCheck },
+  { id: "certs", label: "Certificates", icon: FileKey },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "security", label: "Security", icon: ShieldCheck },
   { id: "api", label: "API Keys", icon: KeyRound },
@@ -101,6 +124,8 @@ export default function SettingsPage() {
   const { keys: apiKeys, reload: reloadKeys } = useApiKeys();
   const { applications } = useApplications();
   const { settings: loadedSettings } = useSystemSettings();
+  const { certificates, reload: reloadCerts } = useCertificates();
+  const { configured: dirConfigured, groups: dirGroups, loading: dirGroupsLoading } = useDirectoryGroups();
   const availableApps = applications.map((a) => a.name);
 
   // System settings (Security + Notifications)
@@ -124,7 +149,45 @@ export default function SettingsPage() {
   const [ldapDisplayNameAttr, setLdapDisplayNameAttr] = useState("displayName");
   const [ldapTlsVerify, setLdapTlsVerify] = useState("true");
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testing, setTesting] = useState(false);
+
+  // Verify-user-mapping state (item: test a single LDAP user)
+  const [verifyUsername, setVerifyUsername] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<LdapUserMapping | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // Certificate import state
+  const [certName, setCertName] = useState("");
+  const [certPem, setCertPem] = useState("");
+  const [certUsage, setCertUsage] = useState("ldap");
+  const [certAdding, setCertAdding] = useState(false);
+  const [certError, setCertError] = useState<string | null>(null);
+
+  // Manage-users: which AD group is expanded to show members (fetched live)
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [groupMembers, setGroupMembers] = useState<Record<string, DirectoryMember[]>>({});
+  const [membersLoading, setMembersLoading] = useState<string | null>(null);
+
+  async function toggleGroup(dn: string) {
+    if (expandedGroup === dn) {
+      setExpandedGroup(null);
+      return;
+    }
+    setExpandedGroup(dn);
+    if (!groupMembers[dn]) {
+      setMembersLoading(dn);
+      try {
+        const res = await fetchGroupMembers(dn);
+        setGroupMembers((prev) => ({ ...prev, [dn]: res.members }));
+      } catch {
+        setGroupMembers((prev) => ({ ...prev, [dn]: [] }));
+      } finally {
+        setMembersLoading(null);
+      }
+    }
+  }
 
   // API key creation state
   const [newKeyName, setNewKeyName] = useState("");
@@ -236,13 +299,64 @@ export default function SettingsPage() {
   async function handleTestConnection() {
     setTesting(true);
     setTestResult(null);
+    setTestOk(null);
     try {
       const res = await testLdap();
       setTestResult(res.message || "Connection successful");
+      setTestOk(true);
     } catch (e) {
       setTestResult(e instanceof Error ? e.message : "Connection failed");
+      setTestOk(false);
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function handleVerifyUser() {
+    const uname = verifyUsername.trim();
+    if (!uname) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    setVerifyError(null);
+    try {
+      const res = await verifyLdapUser(uname);
+      setVerifyResult(res);
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : "Verification failed");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  async function handleAddCertificate() {
+    const pem = certPem.trim();
+    if (!pem) return;
+    setCertAdding(true);
+    setCertError(null);
+    try {
+      await addCertificate({ name: certName.trim() || "Imported certificate", pem, usage: certUsage });
+      setCertName("");
+      setCertPem("");
+      setCertUsage("ldap");
+      reloadCerts();
+    } catch (e) {
+      setCertError(e instanceof Error ? e.message : "Could not import certificate");
+    } finally {
+      setCertAdding(false);
+    }
+  }
+
+  async function handleDeleteCertificate(id: string, name: string) {
+    const ok = await confirm({
+      title: "Delete certificate?",
+      message: `"${name}" will no longer be trusted for outbound TLS connections.`,
+      confirmLabel: "Delete certificate",
+    });
+    if (!ok) return;
+    try {
+      await deleteCertificate(id);
+    } finally {
+      reloadCerts();
     }
   }
 
@@ -303,200 +417,7 @@ export default function SettingsPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  return (
-    <div>
-      <Header title="Settings" subtitle="System configuration" />
-
-      <div className="p-6">
-        <div className="flex gap-6">
-          {/* Sidebar tabs */}
-          <div className="w-48 flex-shrink-0">
-            <nav className="space-y-1">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
-                    activeTab === tab.id
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
-                  }`}
-                >
-                  <tab.icon className="h-4 w-4 flex-shrink-0" />
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 space-y-4">
-            {activeTab === "ldap" && (
-              <>
-                {/* ── LDAP Connection ── */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader className="px-6 pt-6 pb-4">
-                    <CardTitle className="text-base font-semibold text-slate-800 flex items-center gap-2">
-                      <Server className="h-4 w-4 text-slate-500" />
-                      Active Directory / LDAP Configuration
-                    </CardTitle>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Configure LDAPS connection to your Active Directory for user
-                      authentication.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6 space-y-5">
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="col-span-2 space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          LDAP Host
-                        </Label>
-                        <Input
-                          value={ldapHost}
-                          onChange={(e) => setLdapHost(e.target.value)}
-                          placeholder="ldaps://ad.example.com"
-                          className="border-slate-200"
-                        />
-                        <p className="text-xs text-slate-400">
-                          Use ldaps:// for secure connection (port 636)
-                        </p>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          Port
-                        </Label>
-                        <Input
-                          value={ldapPort}
-                          onChange={(e) => setLdapPort(e.target.value)}
-                          placeholder="636"
-                          className="border-slate-200"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-slate-600">
-                        Base DN
-                      </Label>
-                      <Input
-                        value={ldapBaseDn}
-                        onChange={(e) => setLdapBaseDn(e.target.value)}
-                        placeholder="DC=example,DC=com"
-                        className="border-slate-200 font-mono text-sm"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-slate-600">
-                        Bind DN (Service Account)
-                      </Label>
-                      <Input
-                        value={ldapBindDn}
-                        onChange={(e) => setLdapBindDn(e.target.value)}
-                        placeholder="CN=svc-account,DC=example,DC=com"
-                        className="border-slate-200 font-mono text-sm"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-slate-600">
-                        Bind Password
-                      </Label>
-                      <Input
-                        value={ldapBindPassword}
-                        onChange={(e) => setLdapBindPassword(e.target.value)}
-                        type="password"
-                        placeholder="Service account password"
-                        className="border-slate-200"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-slate-600">
-                        User Search Filter
-                      </Label>
-                      <Input
-                        value={ldapUserFilter}
-                        onChange={(e) => setLdapUserFilter(e.target.value)}
-                        placeholder="(&(objectClass=user)(memberOf=CN=...))"
-                        className="border-slate-200 font-mono text-sm"
-                      />
-                      <p className="text-xs text-slate-400">
-                        LDAP filter to restrict which users can log in
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* ── Attribute Mapping ── */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader className="px-6 pt-5 pb-3">
-                    <CardTitle className="text-sm font-semibold text-slate-700">
-                      Attribute Mapping
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6">
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          Username Attribute
-                        </Label>
-                        <Input
-                          value={ldapUsernameAttr}
-                          onChange={(e) => setLdapUsernameAttr(e.target.value)}
-                          placeholder="sAMAccountName"
-                          className="border-slate-200 font-mono text-sm"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          Email Attribute
-                        </Label>
-                        <Input
-                          value={ldapEmailAttr}
-                          onChange={(e) => setLdapEmailAttr(e.target.value)}
-                          placeholder="mail"
-                          className="border-slate-200 font-mono text-sm"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium text-slate-600">
-                          Display Name Attribute
-                        </Label>
-                        <Input
-                          value={ldapDisplayNameAttr}
-                          onChange={(e) => setLdapDisplayNameAttr(e.target.value)}
-                          placeholder="displayName"
-                          className="border-slate-200 font-mono text-sm"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-4 space-y-1.5">
-                      <Label className="text-sm font-medium text-slate-600">
-                        TLS Certificate Verification
-                      </Label>
-                      <Select
-                        value={ldapTlsVerify}
-                        onValueChange={(v) => setLdapTlsVerify(v ?? "true")}
-                      >
-                        <SelectTrigger className="w-48 border-slate-200">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="true">
-                            Verify certificate (recommended)
-                          </SelectItem>
-                          <SelectItem value="false">
-                            Skip verification (dev only)
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* ── Group → Role Mapping ── */}
+  const groupMappingCard = (
                 <Card className="border-0 shadow-sm">
                   <CardHeader className="px-6 pt-5 pb-3">
                     <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
@@ -715,29 +636,584 @@ export default function SettingsPage() {
                     )}
                   </CardContent>
                 </Card>
+  );
+
+  return (
+    <div>
+      <Header title="Settings" subtitle="System configuration" />
+
+      <div className="p-6">
+        <div className="flex gap-6">
+          {/* Sidebar tabs */}
+          <div className="w-48 flex-shrink-0">
+            <nav className="space-y-1">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                    activeTab === tab.id
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+                  }`}
+                >
+                  <tab.icon className="h-4 w-4 flex-shrink-0" />
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 space-y-4">
+            {activeTab === "ldap" && (
+              <>
+                {/* ── LDAP Connection ── */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="px-6 pt-6 pb-4">
+                    <CardTitle className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                      <Server className="h-4 w-4 text-slate-500" />
+                      Active Directory / LDAP Configuration
+                    </CardTitle>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Configure LDAPS connection to your Active Directory for user
+                      authentication.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-5">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="col-span-2 space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          LDAP Host
+                        </Label>
+                        <Input
+                          value={ldapHost}
+                          onChange={(e) => setLdapHost(e.target.value)}
+                          placeholder="ldaps://ad.example.com"
+                          className="border-slate-200"
+                        />
+                        <p className="text-xs text-slate-400">
+                          Use ldaps:// for secure connection (port 636)
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Port
+                        </Label>
+                        <Input
+                          value={ldapPort}
+                          onChange={(e) => setLdapPort(e.target.value)}
+                          placeholder="636"
+                          className="border-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium text-slate-600">
+                        Base DN
+                      </Label>
+                      <Input
+                        value={ldapBaseDn}
+                        onChange={(e) => setLdapBaseDn(e.target.value)}
+                        placeholder="DC=example,DC=com"
+                        className="border-slate-200 font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium text-slate-600">
+                        Bind DN (Service Account)
+                      </Label>
+                      <Input
+                        value={ldapBindDn}
+                        onChange={(e) => setLdapBindDn(e.target.value)}
+                        placeholder="CN=svc-account,DC=example,DC=com"
+                        className="border-slate-200 font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium text-slate-600">
+                        Bind Password
+                      </Label>
+                      <Input
+                        value={ldapBindPassword}
+                        onChange={(e) => setLdapBindPassword(e.target.value)}
+                        type="password"
+                        placeholder="Service account password"
+                        className="border-slate-200"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium text-slate-600">
+                        User Search Filter
+                      </Label>
+                      <Input
+                        value={ldapUserFilter}
+                        onChange={(e) => setLdapUserFilter(e.target.value)}
+                        placeholder="(&(objectClass=user)(memberOf=CN=...))"
+                        className="border-slate-200 font-mono text-sm"
+                      />
+                      <p className="text-xs text-slate-400">
+                        LDAP filter to restrict which users can log in
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* ── Attribute Mapping ── */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="px-6 pt-5 pb-3">
+                    <CardTitle className="text-sm font-semibold text-slate-700">
+                      Attribute Mapping
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Username Attribute
+                        </Label>
+                        <Input
+                          value={ldapUsernameAttr}
+                          onChange={(e) => setLdapUsernameAttr(e.target.value)}
+                          placeholder="sAMAccountName"
+                          className="border-slate-200 font-mono text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Email Attribute
+                        </Label>
+                        <Input
+                          value={ldapEmailAttr}
+                          onChange={(e) => setLdapEmailAttr(e.target.value)}
+                          placeholder="mail"
+                          className="border-slate-200 font-mono text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Display Name Attribute
+                        </Label>
+                        <Input
+                          value={ldapDisplayNameAttr}
+                          onChange={(e) => setLdapDisplayNameAttr(e.target.value)}
+                          placeholder="displayName"
+                          className="border-slate-200 font-mono text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex items-start justify-between rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
+                      <div className="pr-4">
+                        <p className="text-sm font-medium text-slate-700">
+                          Verify TLS certificate
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {ldapTlsVerify === "true"
+                            ? "The server certificate is validated against imported CAs (Settings → Certificates). Recommended."
+                            : "Certificate validation is disabled — only for dev/testing against a self-signed server."}
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 mt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={ldapTlsVerify === "true"}
+                          onChange={(e) => setLdapTlsVerify(e.target.checked ? "true" : "false")}
+                          className="sr-only peer"
+                        />
+                        <div className="w-10 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                  </CardContent>
+                </Card>
+
 
                 {/* ── Test connection ── */}
                 <Card className="border-0 shadow-sm border-dashed border-slate-200 bg-slate-50/50">
-                  <CardContent className="px-6 py-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-slate-700">
-                        Test Connection
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        Verify LDAP settings before saving
-                      </p>
-                      {testResult && (
-                        <p className="text-xs mt-1 text-slate-600">{testResult}</p>
-                      )}
+                  <CardContent className="px-6 py-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-slate-700">
+                          Test Connection
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          Binds with the service account to verify host, port, TLS
+                          and credentials. Save your changes first.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleTestConnection}
+                        disabled={testing}
+                        className="px-4 py-2 border border-slate-300 hover:bg-white disabled:opacity-60 text-slate-700 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        {testing && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {testing ? "Testing..." : "Test LDAP Connection"}
+                      </button>
                     </div>
-                    <button
-                      onClick={handleTestConnection}
-                      disabled={testing}
-                      className="px-4 py-2 border border-slate-300 hover:bg-white disabled:opacity-60 text-slate-700 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
-                    >
-                      {testing && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {testing ? "Testing..." : "Test LDAP Connection"}
-                    </button>
+                    {testResult && (
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm ${
+                          testOk
+                            ? "bg-green-50 border-green-100 text-green-700"
+                            : "bg-red-50 border-red-100 text-red-700"
+                        }`}
+                      >
+                        {testOk ? (
+                          <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        )}
+                        <span>{testResult}</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* ── Verify user mapping ── */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="px-6 pt-5 pb-3">
+                    <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <UserSearch className="h-4 w-4 text-slate-500" />
+                      Verify User Mapping
+                    </CardTitle>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Look up a single directory user to confirm the search filter,
+                      attributes and the role they would be granted.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-4">
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1 space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">
+                          Username to test
+                        </Label>
+                        <Input
+                          value={verifyUsername}
+                          onChange={(e) => setVerifyUsername(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleVerifyUser()}
+                          placeholder="e.g. rahmat.hidayat"
+                          className="border-slate-200"
+                        />
+                      </div>
+                      <button
+                        onClick={handleVerifyUser}
+                        disabled={verifying || !verifyUsername.trim()}
+                        className="h-9 px-4 border border-slate-300 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        {verifying && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {verifying ? "Resolving..." : "Verify User"}
+                      </button>
+                    </div>
+
+                    {verifyError && (
+                      <div className="flex items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                        <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <span>{verifyError}</span>
+                      </div>
+                    )}
+
+                    {verifyResult && (
+                      <div className="rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="flex items-center gap-2 bg-green-50 border-b border-green-100 px-4 py-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm font-medium text-green-700">
+                            User resolved successfully
+                          </span>
+                        </div>
+                        <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                          <div>
+                            <p className="text-xs text-slate-400">Display name</p>
+                            <p className="font-medium text-slate-800">
+                              {verifyResult.display_name || "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-400">Username</p>
+                            <p className="font-mono text-slate-800">
+                              {verifyResult.username}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-400">Email</p>
+                            <p className="text-slate-800">
+                              {verifyResult.email || "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-400">Resolved role</p>
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(
+                                verifyResult.resolved_role,
+                              )}`}
+                            >
+                              {prettyRole(verifyResult.resolved_role)}
+                            </span>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-slate-400">Distinguished Name</p>
+                            <p className="font-mono text-xs text-slate-700 break-all">
+                              {verifyResult.dn}
+                            </p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-slate-400 mb-1">
+                              Group memberships ({verifyResult.groups.length})
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {verifyResult.groups.length === 0 && (
+                                <span className="text-xs text-slate-400">
+                                  No groups returned.
+                                </span>
+                              )}
+                              {verifyResult.groups.map((g) => (
+                                <Badge
+                                  key={g}
+                                  variant="outline"
+                                  className="text-[10px] font-mono text-slate-600 border-slate-200 max-w-full truncate"
+                                >
+                                  {g}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-slate-400">App access</p>
+                            <p className="text-slate-800">
+                              {verifyResult.allowed_apps === null ||
+                              verifyResult.resolved_role === "admin"
+                                ? "All apps"
+                                : (verifyResult.allowed_apps || []).length === 0
+                                ? "No apps (granted by mapping)"
+                                : (verifyResult.allowed_apps || []).join(", ")}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            {activeTab === "users" && (
+              <>
+                {/* ── User accounts (local + directory) — real management ── */}
+                <ManageUsersSection />
+
+                {/* ── Active Directory Groups browser ── */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="px-6 pt-5 pb-3">
+                    <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <FolderTree className="h-4 w-4 text-slate-500" />
+                      Active Directory Groups
+                    </CardTitle>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Browse security groups synced from the directory. Click a group
+                      to see its members and the role they inherit.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-2">
+                    {!dirConfigured ? (
+                      <div className="py-8 text-center">
+                        <p className="text-sm text-slate-500">
+                          Not connected to a directory yet.
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Configure and save the connection under LDAP / AD, then groups
+                          appear here automatically.
+                        </p>
+                      </div>
+                    ) : dirGroupsLoading ? (
+                      <p className="py-8 text-center text-sm text-slate-400">
+                        Reading groups from the directory…
+                      </p>
+                    ) : dirGroups.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-slate-400">
+                        No security groups found under the Base DN.
+                      </p>
+                    ) : (
+                      dirGroups.map((g) => {
+                        const open = expandedGroup === g.dn;
+                        const members = groupMembers[g.dn] || [];
+                        return (
+                          <div key={g.dn} className="rounded-xl border border-slate-200 overflow-hidden">
+                            <button
+                              onClick={() => toggleGroup(g.dn)}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+                            >
+                              <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                              <Building2 className="h-4 w-4 text-slate-400" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-slate-800">{g.name}</p>
+                                <p className="text-xs text-slate-400 font-mono truncate">{g.dn}</p>
+                              </div>
+                              {g.mapped_role && (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${roleBadgeStyle(g.mapped_role)}`}>
+                                  {prettyRole(g.mapped_role)}
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-400 ml-1 flex-shrink-0">
+                                {g.member_count} {g.member_count === 1 ? "member" : "members"}
+                              </span>
+                            </button>
+                            {open && (
+                              <div className="border-t border-slate-100 bg-slate-50/50 divide-y divide-slate-100">
+                                {membersLoading === g.dn ? (
+                                  <p className="px-5 py-3 text-xs text-slate-400">Loading members…</p>
+                                ) : members.length === 0 ? (
+                                  <p className="px-5 py-3 text-xs text-slate-400">No members returned.</p>
+                                ) : (
+                                  members.map((m) => (
+                                    <div key={m.username} className="flex items-center gap-3 px-5 py-2.5">
+                                      <div className="h-7 w-7 rounded-full bg-slate-200 flex items-center justify-center text-xs font-semibold text-slate-600">
+                                        {(m.display_name || m.username).charAt(0)}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm text-slate-700">{m.display_name || m.username}</p>
+                                        <p className="text-xs text-slate-400">{m.email}</p>
+                                      </div>
+                                      <span className="text-xs font-mono text-slate-400">{m.username}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* ── Group → Role mapping (moved here from LDAP) ── */}
+                {groupMappingCard}
+              </>
+            )}
+
+            {activeTab === "roles" && (
+              <div className="space-y-4">
+                <ManageRolesSection />
+              </div>
+            )}
+
+            {activeTab === "certs" && (
+              <>
+                <Card className="border-0 shadow-sm">
+                  <CardHeader className="px-6 pt-6 pb-4">
+                    <CardTitle className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                      <FileKey className="h-4 w-4 text-slate-500" />
+                      Trusted Certificates
+                    </CardTitle>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Import CA or server certificates so InfraShield can make secure
+                      outbound connections (e.g. LDAPS to an internal AD with a
+                      private CA) with certificate verification turned on.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-4">
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Subject</th>
+                            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Expires</th>
+                            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Trusted for</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {certificates.length === 0 && (
+                            <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400">No certificates imported yet.</td></tr>
+                          )}
+                          {certificates.map((c: CertificateRow, idx) => (
+                            <tr key={c.id} className={`border-b border-slate-100 last:border-0 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}`}>
+                              <td className="px-4 py-3 font-medium text-slate-800">{c.name}</td>
+                              <td className="px-4 py-3 font-mono text-xs text-slate-600 max-w-xs truncate" title={c.subject || ""}>{c.subject || "—"}</td>
+                              <td className="px-4 py-3 text-xs text-slate-600">{c.not_after ? new Date(c.not_after).toLocaleDateString() : "—"}</td>
+                              <td className="px-4 py-3">
+                                <Badge variant="outline" className="text-xs text-slate-600 border-slate-200">
+                                  {c.usage === "all" ? "All TLS" : "LDAP"}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  onClick={() => handleDeleteCertificate(c.id, c.name)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Import form */}
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                        Import Certificate
+                      </p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium text-slate-600">Name</Label>
+                          <Input
+                            value={certName}
+                            onChange={(e) => setCertName(e.target.value)}
+                            placeholder="Maybank Internal Root CA"
+                            className="border-slate-200 bg-white text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium text-slate-600">Trusted for</Label>
+                          <Select value={certUsage} onValueChange={(v) => setCertUsage(v ?? "ldap")}>
+                            <SelectTrigger className="w-full border-slate-200 bg-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ldap">LDAP / Active Directory</SelectItem>
+                              <SelectItem value="all">All outbound TLS</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm font-medium text-slate-600">PEM certificate</Label>
+                        <textarea
+                          value={certPem}
+                          onChange={(e) => setCertPem(e.target.value)}
+                          placeholder={"-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"}
+                          rows={6}
+                          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        />
+                        <p className="text-xs text-slate-400">
+                          Paste the CA or server certificate in PEM format (a
+                          -----BEGIN CERTIFICATE----- block).
+                        </p>
+                      </div>
+                      {certError && (
+                        <div className="flex items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                          <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                          <span>{certError}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleAddCertificate}
+                          disabled={certAdding || !certPem.trim()}
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors"
+                        >
+                          {certAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                          {certAdding ? "Importing..." : "Import Certificate"}
+                        </button>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </>
@@ -1061,27 +1537,30 @@ export default function SettingsPage() {
               </Card>
             )}
 
-            {/* Save button */}
-            <div className="flex items-center justify-end gap-3 pt-2">
-              {saved && (
-                <span className="flex items-center gap-1.5 text-sm text-green-600">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Settings saved
-                </span>
-              )}
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
-              >
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
+            {/* Save button — only for tabs that persist system/LDAP settings.
+                Users, Certificates and API Keys manage themselves inline. */}
+            {!["users", "roles", "certs", "api"].includes(activeTab) && (
+              <div className="flex items-center justify-end gap-3 pt-2">
+                {saved && (
+                  <span className="flex items-center gap-1.5 text-sm text-green-600">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Settings saved
+                  </span>
                 )}
-                {saving ? "Saving..." : "Save Settings"}
-              </button>
-            </div>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
+                >
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {saving ? "Saving..." : "Save Settings"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

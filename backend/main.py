@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from models import (
     init_db, get_db, SessionLocal, User, SystemConfig, LdapConfig,
-    LdapGroupMapping, Role, Activity,
+    LdapGroupMapping, Role, Activity, Certificate,
 )
 from auth import hash_password, verify_password, create_access_token, decode_token
 from ldap_auth import ldap_authenticate, resolve_role_from_groups
@@ -364,8 +364,13 @@ def logout(response: Response):
 def list_activity(
     limit: int = 30,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    # The activity feed is an org-wide audit log (imports, deletes, user/role
+    # changes across every application). Users restricted to specific apps —
+    # i.e. app teams — must not see other teams' activity, so they get nothing.
+    if _accessible_app_names(user) is not None:
+        return []
     rows = (
         db.query(Activity)
         .order_by(Activity.created_at.desc())
@@ -652,23 +657,115 @@ def save_ldap_config(
 
 @app.post("/api/ldap/test")
 def test_ldap_connection(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
-    from ldap_auth import get_ldap_config as _get_cfg
-    from ldap3 import Server, Connection, ALL, Tls
-    import ssl as _ssl
+    from ldap_auth import get_ldap_config as _get_cfg, build_tls
+    from ldap3 import Server, Connection, ALL
 
     cfg = _get_cfg(db)
     if not cfg or not cfg.host:
-        raise HTTPException(status_code=400, detail="LDAP not configured")
+        raise HTTPException(
+            status_code=400,
+            detail="LDAP is not configured yet. Fill in the connection details above and click Save first.",
+        )
+    if not cfg.bind_dn or not cfg.bind_password:
+        raise HTTPException(
+            status_code=400,
+            detail="No service account is set. Enter a Bind DN and password, then Save before testing.",
+        )
     try:
-        tls = None
-        if cfg.use_ssl:
-            tls = Tls(validate=_ssl.CERT_REQUIRED if cfg.tls_verify else _ssl.CERT_NONE)
+        tls = build_tls(db, cfg)
         server = Server(cfg.host, port=cfg.port, use_ssl=cfg.use_ssl, tls=tls, get_info=ALL)
         conn = Connection(server, user=cfg.bind_dn, password=cfg.bind_password, auto_bind=True)
         conn.unbind()
-        return {"ok": True, "message": "LDAP connection successful"}
+        return {"ok": True, "message": f"Bound successfully to {cfg.host}:{cfg.port} as {cfg.bind_dn}."}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"LDAP connection failed: {str(e)}")
+        msg = str(e)
+        hint = ""
+        low = msg.lower()
+        if "certificate" in low or "ssl" in low or "tls" in low:
+            hint = " — the server certificate could not be verified. Import its CA under Settings → Certificates, or turn off certificate verification for testing."
+        elif "invalidcredentials" in low.replace(" ", "") or "invalid credentials" in low:
+            hint = " — the service account Bind DN or password is wrong."
+        elif "socket" in low or "connection" in low or "timed out" in low or "unreachable" in low:
+            hint = " — the host/port is unreachable. Check the address, firewall, and whether LDAPS (636) vs LDAP (389) is correct."
+        raise HTTPException(status_code=400, detail=f"LDAP connection failed: {msg}{hint}")
+
+
+class VerifyUserIn(BaseModel):
+    username: str
+
+
+@app.post("/api/ldap/verify-user")
+def verify_ldap_user(
+    body: VerifyUserIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("manage_settings")),
+):
+    """Resolve a single directory user and show the role they'd be granted."""
+    from ldap_auth import verify_user_mapping
+
+    uname = (body.username or "").strip()
+    if not uname:
+        raise HTTPException(status_code=400, detail="Enter a username to verify.")
+    try:
+        return {"ok": True, **verify_user_mapping(uname, db)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Verification failed: {e}")
+
+
+def _ldap_configured(db: Session) -> bool:
+    from ldap_auth import get_ldap_config as _get_cfg
+    cfg = _get_cfg(db)
+    return bool(cfg and cfg.host and cfg.bind_dn and cfg.base_dn)
+
+
+@app.get("/api/ldap/directory-users")
+def directory_users(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_users"))):
+    """Live list of users allowed to sign in, read straight from the directory.
+
+    `configured` is false (with an empty list) when LDAP isn't set up yet, so
+    the UI can show a "connect LDAP first" hint instead of an error.
+    """
+    from ldap_auth import list_directory_users
+    if not _ldap_configured(db):
+        return {"configured": False, "users": []}
+    try:
+        return {"configured": True, "users": list_directory_users(db)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read directory users: {e}")
+
+
+@app.get("/api/ldap/directory-groups")
+def directory_groups(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
+    from ldap_auth import list_directory_groups
+    if not _ldap_configured(db):
+        return {"configured": False, "groups": []}
+    try:
+        return {"configured": True, "groups": list_directory_groups(db)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read directory groups: {e}")
+
+
+@app.get("/api/ldap/directory-groups/members")
+def directory_group_members(
+    dn: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("manage_settings")),
+):
+    from ldap_auth import list_group_members
+    if not _ldap_configured(db):
+        return {"configured": False, "members": []}
+    try:
+        return {"configured": True, "members": list_group_members(db, dn)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read group members: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -738,6 +835,95 @@ def delete_group_mapping(
         raise HTTPException(status_code=404, detail="Mapping not found")
     db.delete(mapping)
     db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# Routes: Certificates / trust anchors (admin only)
+# ─────────────────────────────────────────────
+
+class CertificateIn(BaseModel):
+    name: str
+    pem: str
+    usage: str = "ldap"   # "ldap" | "all"
+
+
+def _cert_out(c: Certificate) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "subject": c.subject,
+        "issuer": c.issuer,
+        "fingerprint": c.fingerprint,
+        "not_after": c.not_after.isoformat() + "Z" if c.not_after else None,
+        "usage": c.usage,
+        "created_by": c.created_by,
+        "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+    }
+
+
+def _parse_certificate(pem: str) -> dict:
+    """Best-effort metadata extraction. Falls back gracefully if the
+    `cryptography` package is unavailable so an import still succeeds."""
+    meta = {"subject": None, "issuer": None, "fingerprint": None, "not_after": None}
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        cert = x509.load_pem_x509_certificate(pem.encode())
+        meta["subject"] = cert.subject.rfc4514_string()
+        meta["issuer"] = cert.issuer.rfc4514_string()
+        meta["fingerprint"] = cert.fingerprint(hashes.SHA256()).hex(":")
+        try:
+            meta["not_after"] = cert.not_valid_after_utc.replace(tzinfo=None)
+        except AttributeError:
+            meta["not_after"] = cert.not_valid_after
+    except Exception:
+        pass
+    return meta
+
+
+@app.get("/api/certificates")
+def list_certificates(db: Session = Depends(get_db), _: User = Depends(require_permission("manage_settings"))):
+    return [_cert_out(c) for c in db.query(Certificate).order_by(Certificate.created_at.desc()).all()]
+
+
+@app.post("/api/certificates")
+def add_certificate(
+    body: CertificateIn,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_permission("manage_settings")),
+):
+    pem = (body.pem or "").strip()
+    if "BEGIN CERTIFICATE" not in pem:
+        raise HTTPException(status_code=400, detail="That does not look like a PEM certificate (expected a -----BEGIN CERTIFICATE----- block).")
+    meta = _parse_certificate(pem)
+    cert = Certificate(
+        name=body.name.strip() or "Imported certificate",
+        pem=pem,
+        usage=body.usage if body.usage in ("ldap", "all") else "ldap",
+        created_by=actor.username,
+        **meta,
+    )
+    db.add(cert)
+    db.commit()
+    db.refresh(cert)
+    record_activity(db, "import", f"Imported certificate '{cert.name}'", actor=actor.username)
+    return _cert_out(cert)
+
+
+@app.delete("/api/certificates/{cert_id}")
+def delete_certificate(
+    cert_id: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_permission("manage_settings")),
+):
+    cert = db.query(Certificate).filter(Certificate.id == cert_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    name = cert.name
+    db.delete(cert)
+    db.commit()
+    record_activity(db, "delete", f"Deleted certificate '{name}'", actor=actor.username)
     return {"ok": True}
 
 
@@ -844,12 +1030,29 @@ def _finding_visible(user: User, finding: Finding) -> bool:
     return finding.scan.image_tag.application.name in allowed
 
 
+# Stable presentation order for findings. Without this, PostgreSQL may return
+# a row that was just UPDATE-d (e.g. status → mitigated) in a different physical
+# position, making the finding appear to "jump" in the UI after a status change.
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def _ordered_findings(findings):
+    return sorted(
+        findings,
+        key=lambda f: (
+            _SEVERITY_RANK.get(f.severity, 5),
+            f.found_at or datetime.min,
+            f.id,
+        ),
+    )
+
+
 @app.get("/api/scans/{scan_id}/findings")
 def scan_findings(scan_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan or not _app_visible(user, scan.image_tag.application):
         raise HTTPException(status_code=404, detail="Scan not found")
-    return [serializers.finding_dict(f) for f in scan.findings]
+    return [serializers.finding_dict(f) for f in _ordered_findings(scan.findings)]
 
 
 @app.get("/api/tags/{tag_id}/findings")
@@ -859,7 +1062,7 @@ def tag_findings(tag_id: str, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(status_code=404, detail="Tag not found")
     out = []
     for s in tag.scans:
-        out.extend(serializers.finding_dict(f) for f in s.findings)
+        out.extend(serializers.finding_dict(f) for f in _ordered_findings(s.findings))
     return out
 
 

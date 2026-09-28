@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   AppWindow,
   Bug,
-  Users,
   Settings,
   LogOut,
   ChevronRight,
@@ -36,12 +35,9 @@ const navItems = [
   },
 ];
 
+// Administration menu — only visible to users who can manage settings
+// (Roles & Users now live inside Settings as tabs).
 const adminItems = [
-  {
-    title: "Roles",
-    href: "/dashboard/roles",
-    icon: Users,
-  },
   {
     title: "Settings",
     href: "/dashboard/settings",
@@ -62,6 +58,7 @@ export function Sidebar() {
     username: string;
     display_name?: string;
     role: string;
+    permissions?: string[];
   } | null>(null);
 
   useEffect(() => {
@@ -70,6 +67,9 @@ export function Sidebar() {
       .then(setUser)
       .catch(() => {});
   }, []);
+
+  // Administration (Settings) is only for users who can manage settings.
+  const canAdminister = !!user?.permissions?.includes("manage_settings");
 
   const displayName = user?.display_name || user?.username || "";
   const prettyRole = (r: string) =>
@@ -126,6 +126,7 @@ export function Sidebar() {
           </Link>
         ))}
 
+        {canAdminister && (
         <div className="pt-3">
           <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
             Administration
@@ -149,6 +150,7 @@ export function Sidebar() {
             </Link>
           ))}
         </div>
+        )}
       </nav>
 
       <Separator className="bg-slate-700/50" />

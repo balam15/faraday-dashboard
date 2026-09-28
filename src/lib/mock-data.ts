@@ -36,6 +36,9 @@ export interface ScanResult {
   scannedAt: string;
   findings: SeverityCount;
   status: "completed" | "running" | "failed";
+  total?: number;
+  resolved?: number;
+  resolvedPct?: number;
 }
 
 export interface ImageTag {

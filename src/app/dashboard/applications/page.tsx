@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { getRiskBadgeClass, getTotalFindings, type Application } from "@/lib/mock-data";
-import { useApplications } from "@/lib/api";
+import { useApplications, useMe } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,8 @@ interface ProjectGroup {
 
 export default function ApplicationsPage() {
   const { applications, reload } = useApplications();
+  const { me } = useMe();
+  const canImport = !!me?.permissions.includes("import_scans");
   const [importOpen, setImportOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -217,16 +219,20 @@ export default function ApplicationsPage() {
               className="pl-9 w-72 h-9 text-sm bg-white border-slate-200"
             />
           </div>
-          <button
-            onClick={() => setImportOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <UploadCloud className="h-4 w-4" />
-            Import Scan
-          </button>
+          {canImport && (
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <UploadCloud className="h-4 w-4" />
+              Import Scan
+            </button>
+          )}
         </div>
 
-        <ImportScanDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={reload} />
+        {canImport && (
+          <ImportScanDialog open={importOpen} onClose={() => setImportOpen(false)} onImported={reload} />
+        )}
 
         {shown.map((p) => (
           <Card
@@ -283,7 +289,11 @@ export default function ApplicationsPage() {
         ))}
         {shown.length === 0 && (
           <p className="text-sm text-slate-400 py-8 text-center">
-            {projects.length === 0 ? "No applications yet. Import a scan to get started." : "No applications match your search."}
+            {projects.length === 0
+              ? canImport
+                ? "No applications yet. Import a scan to get started."
+                : "No applications assigned to you yet. Ask an administrator for access."
+              : "No applications match your search."}
           </p>
         )}
       </div>

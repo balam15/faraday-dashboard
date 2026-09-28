@@ -53,18 +53,6 @@ def get_or_create_tag(
     return row
 
 
-def _prior_status_map(db: Session, image_tag_id: str, scanner: str) -> Dict[str, str]:
-    """dedup_hash → triaged status, from the previous run of this scanner."""
-    rows = (
-        db.query(Finding.dedup_hash, Finding.status)
-        .join(Scan, Finding.scan_id == Scan.id)
-        .filter(Scan.image_tag_id == image_tag_id, Scan.scanner == scanner)
-        .filter(Finding.status.in_(_TRIAGED))
-        .all()
-    )
-    return {h: s for h, s in rows}
-
-
 def persist_scan(
     db: Session,
     result: ParseResult,
@@ -84,7 +72,28 @@ def persist_scan(
     app = get_or_create_application(db, app_name, team=team, app_type=app_type)
     image_tag = get_or_create_tag(db, app, tag, digest)
 
-    carried = _prior_status_map(db, image_tag.id, scanner)
+    # Snapshot the previous run of this scanner on this tag BEFORE deleting it,
+    # so we can (a) carry over human triage and (b) auto-remediate findings that
+    # are no longer reported.
+    prior: Dict[str, dict] = {}
+    prior_findings = (
+        db.query(Finding)
+        .join(Scan, Finding.scan_id == Scan.id)
+        .filter(
+            Scan.image_tag_id == image_tag.id,
+            Scan.scanner == scanner,
+            Scan.scan_type == scan_type,
+        )
+        .all()
+    )
+    for f in prior_findings:
+        prior[f.dedup_hash] = {
+            "title": f.title, "severity": f.severity, "file_path": f.file_path,
+            "line_number": f.line_number, "cwe": f.cwe, "cve": f.cve,
+            "description": f.description, "remediation": f.remediation,
+            "status": f.status, "found_at": f.found_at,
+        }
+    is_reimport = len(prior_findings) > 0
 
     # Replace any previous run of the same scanner on this tag (one row per
     # scanner+type per tag, matching how the UI lists scans).
@@ -98,12 +107,13 @@ def persist_scan(
         .delete(synchronize_session=False)
     )
 
+    now = scanned_at or datetime.utcnow()
     scan = Scan(
         image_tag_id=image_tag.id,
         scanner=scanner,
         scan_type=scan_type,
         format=result.format,
-        scanned_at=scanned_at or datetime.utcnow(),
+        scanned_at=now,
         imported_at=datetime.utcnow(),
         status="completed",
     )
@@ -116,6 +126,9 @@ def persist_scan(
         if h in seen:
             continue  # collapse duplicates within the same scan
         seen.add(h)
+        # Carry a human triage decision (mitigated/accepted/false_positive) over.
+        prev = prior.get(h)
+        status = prev["status"] if prev and prev["status"] in _TRIAGED else "open"
         db.add(Finding(
             scan_id=scan.id,
             title=pf.title,
@@ -128,10 +141,34 @@ def persist_scan(
             cve=pf.cve,
             description=pf.description or "",
             remediation=pf.remediation,
-            status=carried.get(h, "open"),
-            found_at=scanned_at or datetime.utcnow(),
+            status=status,
+            found_at=now,
             dedup_hash=h,
         ))
+
+    # Auto-remediate: findings present before but no longer reported are kept
+    # and marked "mitigated" (unless a human already accepted / flagged them).
+    if is_reimport:
+        for h, prev in prior.items():
+            if h in seen:
+                continue
+            status = prev["status"] if prev["status"] in ("false_positive", "accepted") else "mitigated"
+            db.add(Finding(
+                scan_id=scan.id,
+                title=prev["title"],
+                severity=prev["severity"],
+                scanner=scanner,
+                scan_type=scan_type,
+                file_path=prev["file_path"],
+                line_number=prev["line_number"],
+                cwe=prev["cwe"],
+                cve=prev["cve"],
+                description=prev["description"] or "",
+                remediation=prev["remediation"],
+                status=status,
+                found_at=prev["found_at"] or now,
+                dedup_hash=h,
+            ))
 
     db.commit()
     db.refresh(scan)

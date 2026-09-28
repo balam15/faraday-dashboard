@@ -22,6 +22,7 @@ const nextConfig: NextConfig = {
       "scanners",
       "import-scan",
       "apikeys",
+      "certificates",
     ];
     return [
       ...prefixes.map((p) => ({

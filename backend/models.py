@@ -111,6 +111,26 @@ class ApiKey(Base):
     is_active  = Column(Boolean, default=True)
 
 
+class Certificate(Base):
+    """CA / SSL certificates imported by an admin.
+
+    Used as trust anchors when the app makes outbound TLS connections
+    (e.g. LDAPS to Active Directory). The PEM body is stored as-is; the
+    parsed metadata columns are for display only.
+    """
+    __tablename__ = "certificates"
+    id          = Column(String(36), primary_key=True, default=gen_uuid)
+    name        = Column(String(128), nullable=False)
+    pem         = Column(Text, nullable=False)
+    subject     = Column(String(512), nullable=True)
+    issuer      = Column(String(512), nullable=True)
+    fingerprint = Column(String(128), nullable=True)
+    not_after   = Column(DateTime, nullable=True)
+    usage       = Column(String(32), default="ldap")  # where it's trusted
+    created_by  = Column(String(128), nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
 # ══════════════════════════════════════════════════════════════════
 # Scan data tables
 # ══════════════════════════════════════════════════════════════════

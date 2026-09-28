@@ -12,6 +12,109 @@ def get_ldap_config(db: Session) -> Optional[LdapConfig]:
     return db.query(LdapConfig).filter(LdapConfig.id == 1).first()
 
 
+def build_tls(db: Session, cfg: LdapConfig) -> Optional[Tls]:
+    """Build the ldap3 Tls object for a connection.
+
+    When certificate verification is on, any CA/SSL certificates imported
+    under Settings → Certificates (usage 'ldap' or 'all') are supplied as
+    trust anchors so LDAPS to an internal AD with a private CA works without
+    disabling verification.
+    """
+    if not cfg.use_ssl:
+        return None
+    if not cfg.tls_verify:
+        return Tls(validate=ssl.CERT_NONE)
+
+    from models import Certificate  # local import to avoid a cycle
+    pems = [
+        c.pem
+        for c in db.query(Certificate).filter(Certificate.usage.in_(("ldap", "all"))).all()
+        if c.pem
+    ]
+    ca_data = "\n".join(pems) if pems else None
+    return Tls(validate=ssl.CERT_REQUIRED, ca_certs_data=ca_data)
+
+
+def verify_user_mapping(username: str, db: Session) -> dict:
+    """Look a user up in the directory (service-account bind, no password
+    check) and report the attributes and the role they would be granted.
+
+    Raises ValueError with a human-readable message on any failure so the
+    UI can explain exactly what went wrong.
+    """
+    cfg = get_ldap_config(db)
+    if not cfg or not cfg.host:
+        raise ValueError("LDAP is not configured yet. Fill in the connection details and save first.")
+    if not cfg.bind_dn or not cfg.bind_password:
+        raise ValueError("No service account (Bind DN / password) is set — it is required to search for users.")
+    if not cfg.base_dn:
+        raise ValueError("Base DN is empty. Set it (e.g. DC=example,DC=com) so the directory can be searched.")
+
+    try:
+        tls = build_tls(db, cfg)
+        server = Server(cfg.host, port=cfg.port, use_ssl=cfg.use_ssl, tls=tls, get_info=ALL)
+        conn = Connection(server, user=cfg.bind_dn, password=cfg.bind_password, auto_bind=True)
+    except LDAPException as e:
+        raise ValueError(f"Could not bind with the service account: {e}") from e
+    except Exception as e:  # TLS / DNS / socket errors
+        raise ValueError(f"Could not reach the LDAP server: {e}") from e
+
+    try:
+        safe_username = escape_filter_chars(username)
+        user_filter = cfg.user_filter or f"({cfg.username_attr}={{username}})"
+        search_filter = user_filter.replace("{username}", safe_username)
+        if "{username}" not in (cfg.user_filter or "{username}"):
+            # Filter had no placeholder — AND it with a username match.
+            search_filter = f"(&{user_filter}({cfg.username_attr}={safe_username}))"
+        if not search_filter.startswith("("):
+            search_filter = f"({cfg.username_attr}={safe_username})"
+
+        conn.search(
+            search_base=cfg.base_dn,
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=[cfg.username_attr, cfg.email_attr, cfg.display_name_attr,
+                        "memberOf", "distinguishedName"],
+        )
+        if not conn.entries:
+            raise ValueError(
+                f"User '{username}' was not found under {cfg.base_dn}. "
+                "Check the username attribute and search filter."
+            )
+
+        entry = conn.entries[0]
+
+        def attr(name: str) -> str:
+            try:
+                v = getattr(entry, name)
+                return str(v) if v else ""
+            except Exception:
+                return ""
+
+        groups: list[str] = []
+        try:
+            if entry.memberOf:
+                groups = [str(g) for g in entry.memberOf]
+        except Exception:
+            pass
+
+        role, apps = resolve_role_from_groups(groups, db)
+        return {
+            "dn": entry.entry_dn,
+            "username": attr(cfg.username_attr) or username,
+            "email": attr(cfg.email_attr),
+            "display_name": attr(cfg.display_name_attr),
+            "groups": groups,
+            "resolved_role": role,
+            "allowed_apps": apps,
+        }
+    finally:
+        try:
+            conn.unbind()
+        except Exception:
+            pass
+
+
 def ldap_authenticate(
     username: str,
     password: str,
@@ -27,12 +130,8 @@ def ldap_authenticate(
         return False, None
 
     try:
-        # TLS setup
-        tls = None
-        if cfg.use_ssl:
-            tls = Tls(
-                validate=ssl.CERT_REQUIRED if cfg.tls_verify else ssl.CERT_NONE,
-            )
+        # TLS setup (uses any imported CA certs when verification is on)
+        tls = build_tls(db, cfg)
 
         server = Server(
             cfg.host,
@@ -149,3 +248,158 @@ def resolve_role_from_groups(groups: list[str], db: Session) -> Tuple[str, Optio
     matched.sort(key=lambda x: x[0], reverse=True)
     _, best_role, best_apps = matched[0]
     return best_role, best_apps
+
+
+# ─────────────────────────────────────────────
+# Live directory enumeration (browse AD without waiting for logins)
+# ─────────────────────────────────────────────
+
+def _connect(db: Session, cfg: LdapConfig) -> Connection:
+    """Bind with the service account. Raises ValueError with a clear message."""
+    if not cfg or not cfg.host:
+        raise ValueError("LDAP is not configured yet. Fill in the connection details and save first.")
+    if not cfg.bind_dn or not cfg.bind_password:
+        raise ValueError("No service account (Bind DN / password) is set — it is required to browse the directory.")
+    if not cfg.base_dn:
+        raise ValueError("Base DN is empty. Set it (e.g. DC=example,DC=com) so the directory can be searched.")
+    try:
+        tls = build_tls(db, cfg)
+        server = Server(cfg.host, port=cfg.port, use_ssl=cfg.use_ssl, tls=tls, get_info=ALL)
+        return Connection(server, user=cfg.bind_dn, password=cfg.bind_password, auto_bind=True)
+    except LDAPException as e:
+        raise ValueError(f"Could not bind with the service account: {e}") from e
+    except Exception as e:
+        raise ValueError(f"Could not reach the LDAP server: {e}") from e
+
+
+def _attr(entry, name: str) -> str:
+    try:
+        v = getattr(entry, name)
+        return str(v) if v else ""
+    except Exception:
+        return ""
+
+
+def _entry_groups(entry) -> list[str]:
+    try:
+        if entry.memberOf:
+            return [str(g) for g in entry.memberOf]
+    except Exception:
+        pass
+    return []
+
+
+def list_directory_users(db: Session, limit: int = 200) -> list[dict]:
+    """Enumerate the users allowed to sign in (the login filter), live from AD.
+
+    Returns each user's attributes plus the role they would be granted from
+    their group memberships. Read-only preview — no accounts are created.
+    """
+    cfg = get_ldap_config(db)
+    conn = _connect(db, cfg)
+    try:
+        # Use the configured login filter so the list matches exactly who can
+        # authenticate. Replace the {username} placeholder with a wildcard.
+        base_filter = cfg.user_filter or "(&(objectClass=user)(objectCategory=person))"
+        search_filter = base_filter.replace("{username}", "*") if "{username}" in base_filter else base_filter
+        if not search_filter.startswith("("):
+            search_filter = f"({cfg.username_attr}=*)"
+
+        conn.search(
+            search_base=cfg.base_dn,
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=[cfg.username_attr, cfg.email_attr, cfg.display_name_attr, "memberOf"],
+            paged_size=limit,
+            size_limit=limit,
+        )
+        users = []
+        for e in list(conn.entries)[:limit]:
+            groups = _entry_groups(e)
+            role, apps = resolve_role_from_groups(groups, db)
+            users.append({
+                "username": _attr(e, cfg.username_attr),
+                "email": _attr(e, cfg.email_attr),
+                "display_name": _attr(e, cfg.display_name_attr),
+                "groups_count": len(groups),
+                "resolved_role": role,
+                "allowed_apps": apps,
+                "dn": e.entry_dn,
+            })
+        # Stable, human-friendly ordering.
+        users.sort(key=lambda u: (u["display_name"] or u["username"] or "").lower())
+        return users
+    finally:
+        try:
+            conn.unbind()
+        except Exception:
+            pass
+
+
+def list_directory_groups(db: Session, limit: int = 200) -> list[dict]:
+    """Enumerate security groups live from AD (name, DN, member count, and the
+    platform role mapped to them if any)."""
+    cfg = get_ldap_config(db)
+    conn = _connect(db, cfg)
+    try:
+        conn.search(
+            search_base=cfg.base_dn,
+            search_filter="(objectClass=group)",
+            search_scope=SUBTREE,
+            attributes=["cn", "member"],
+            paged_size=limit,
+            size_limit=limit,
+        )
+        # Map DN → mapped platform role (lowercased) for a quick lookup.
+        mapped = {}
+        for m in db.query(LdapGroupMapping).all():
+            mapped[m.group_dn.lower()] = (m.role or "").strip().lower().replace(" ", "_")
+
+        groups = []
+        for e in list(conn.entries)[:limit]:
+            dn = e.entry_dn
+            try:
+                members = list(e.member) if e.member else []
+            except Exception:
+                members = []
+            groups.append({
+                "dn": dn,
+                "name": _attr(e, "cn") or dn,
+                "member_count": len(members),
+                "mapped_role": mapped.get(dn.lower()),
+            })
+        groups.sort(key=lambda g: (g["name"] or "").lower())
+        return groups
+    finally:
+        try:
+            conn.unbind()
+        except Exception:
+            pass
+
+
+def list_group_members(db: Session, group_dn: str, limit: int = 200) -> list[dict]:
+    """List the users that belong to a given group DN, live from AD."""
+    cfg = get_ldap_config(db)
+    conn = _connect(db, cfg)
+    try:
+        safe_dn = escape_filter_chars(group_dn)
+        conn.search(
+            search_base=cfg.base_dn,
+            search_filter=f"(&({cfg.username_attr}=*)(memberOf={safe_dn}))",
+            search_scope=SUBTREE,
+            attributes=[cfg.username_attr, cfg.email_attr, cfg.display_name_attr],
+            paged_size=limit,
+            size_limit=limit,
+        )
+        members = [{
+            "username": _attr(e, cfg.username_attr),
+            "email": _attr(e, cfg.email_attr),
+            "display_name": _attr(e, cfg.display_name_attr),
+        } for e in list(conn.entries)[:limit]]
+        members.sort(key=lambda m: (m["display_name"] or m["username"] or "").lower())
+        return members
+    finally:
+        try:
+            conn.unbind()
+        except Exception:
+            pass

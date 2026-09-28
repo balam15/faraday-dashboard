@@ -314,6 +314,109 @@ export function testLdap() {
   return apiSend<{ ok: boolean; message: string }>("/api/ldap/test", "POST");
 }
 
+export interface LdapUserMapping {
+  ok: boolean;
+  dn: string;
+  username: string;
+  email: string;
+  display_name: string;
+  groups: string[];
+  resolved_role: string;
+  allowed_apps: string[] | null;
+}
+
+export function verifyLdapUser(username: string) {
+  return apiSend<LdapUserMapping>("/api/ldap/verify-user", "POST", { username });
+}
+
+// ── Live directory browsing (users + groups read straight from AD) ──
+
+export interface DirectoryUser {
+  username: string;
+  email: string;
+  display_name: string;
+  groups_count: number;
+  resolved_role: string;
+  allowed_apps: string[] | null;
+  dn: string;
+}
+
+export function useDirectoryUsers() {
+  const s = useAsync<{ configured: boolean; users: DirectoryUser[] }>(
+    () => apiGet("/api/ldap/directory-users"),
+    { configured: false, users: [] },
+    [],
+  );
+  return {
+    configured: s.data.configured,
+    users: s.data.users,
+    loading: s.loading,
+    error: s.error,
+    reload: s.reload,
+  };
+}
+
+export interface DirectoryGroup {
+  dn: string;
+  name: string;
+  member_count: number;
+  mapped_role: string | null;
+}
+
+export function useDirectoryGroups() {
+  const s = useAsync<{ configured: boolean; groups: DirectoryGroup[] }>(
+    () => apiGet("/api/ldap/directory-groups"),
+    { configured: false, groups: [] },
+    [],
+  );
+  return {
+    configured: s.data.configured,
+    groups: s.data.groups,
+    loading: s.loading,
+    error: s.error,
+    reload: s.reload,
+  };
+}
+
+export interface DirectoryMember {
+  username: string;
+  email: string;
+  display_name: string;
+}
+
+export function fetchGroupMembers(dn: string) {
+  return apiGet<{ configured: boolean; members: DirectoryMember[] }>(
+    `/api/ldap/directory-groups/members?dn=${encodeURIComponent(dn)}`,
+  );
+}
+
+// ── Certificates / trust anchors (admin) ──────────────────────────
+
+export interface CertificateRow {
+  id: string;
+  name: string;
+  subject: string | null;
+  issuer: string | null;
+  fingerprint: string | null;
+  not_after: string | null;
+  usage: string;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export function useCertificates() {
+  const s = useAsync<CertificateRow[]>(() => apiGet("/api/certificates"), [], []);
+  return { certificates: s.data, loading: s.loading, reload: s.reload };
+}
+
+export function addCertificate(body: { name: string; pem: string; usage: string }) {
+  return apiSend<CertificateRow>("/api/certificates", "POST", body);
+}
+
+export function deleteCertificate(id: string) {
+  return apiSend(`/api/certificates/${id}`, "DELETE");
+}
+
 // ── System settings (Security + Notifications) ────────────────────
 
 export interface SystemSettings {
