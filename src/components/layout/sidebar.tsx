@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   AppWindow,
   Bug,
+  LineChart,
   Settings,
   LogOut,
   ChevronRight,
@@ -32,6 +33,11 @@ const navItems = [
     title: "Findings",
     href: "/dashboard/findings",
     icon: Bug,
+  },
+  {
+    title: "Analytics",
+    href: "/dashboard/analytics",
+    icon: LineChart,
   },
 ];
 
