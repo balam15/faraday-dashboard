@@ -122,6 +122,26 @@ export function useFindings() {
   return { findings: s.data, loading: s.loading, error: s.error, reload: s.reload };
 }
 
+export interface ScanSnapshotPoint {
+  id: string;
+  tag: string;
+  importedAt: string | null;
+  total: number;
+  open: number;
+  mitigated: number;
+  findings: { critical: number; high: number; medium: number; low: number; info: number };
+}
+
+// Per-import history for one image tag (oldest → newest), for the Analytics trend.
+export function useTagSnapshots(tagId: string | undefined) {
+  const s = useAsync<ScanSnapshotPoint[]>(
+    () => (tagId ? apiGet<ScanSnapshotPoint[]>(`/api/tags/${tagId}/snapshots`) : Promise.resolve([])),
+    [],
+    [tagId],
+  );
+  return { snapshots: s.data, loading: s.loading, error: s.error, reload: s.reload };
+}
+
 // ── Mutations ─────────────────────────────────────────────────────
 
 export function updateFindingStatus(id: string, status: Finding["status"]) {

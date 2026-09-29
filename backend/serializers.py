@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from models import Application, Finding, ImageTag, Scan
+from models import Application, Finding, ImageTag, Scan, ScanSnapshot
 import scoring
 
 # Statuses that still count toward the risk score.
@@ -67,6 +67,24 @@ def scan_dict(s: Scan) -> dict:
         "total": total,
         "resolved": resolved,
         "resolvedPct": round(100 * resolved / total) if total else 0,
+    }
+
+
+def snapshot_dict(s: ScanSnapshot) -> dict:
+    return {
+        "id": s.id,
+        "tag": s.tag,
+        "importedAt": iso(s.imported_at),
+        "total": s.total,
+        "open": s.open,
+        "mitigated": s.mitigated,
+        "findings": {
+            "critical": s.critical,
+            "high": s.high,
+            "medium": s.medium,
+            "low": s.low,
+            "info": s.info,
+        },
     }
 
 

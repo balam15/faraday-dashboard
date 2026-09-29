@@ -220,6 +220,35 @@ class Finding(Base):
     )
 
 
+class ScanSnapshot(Base):
+    """Point-in-time record of an image tag's finding posture at each import.
+
+    Re-importing a scanner overwrites the previous scan in place, so the live
+    tables only ever hold the latest state. This append-only table preserves
+    the history the Analytics trend needs — so progress is visible even when
+    everything is imported into a single tag such as ``latest``. Pruned to the
+    most recent N rows per image tag.
+    """
+    __tablename__ = "scan_snapshots"
+    id             = Column(String(36), primary_key=True, default=gen_uuid)
+    application_id = Column(String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_tag_id   = Column(String(36), ForeignKey("image_tags.id", ondelete="CASCADE"), nullable=False, index=True)
+    tag            = Column(String(256), nullable=False)
+    imported_at    = Column(DateTime, default=datetime.utcnow, index=True)
+    total          = Column(Integer, nullable=False, default=0)
+    open           = Column(Integer, nullable=False, default=0)
+    mitigated      = Column(Integer, nullable=False, default=0)
+    critical       = Column(Integer, nullable=False, default=0)
+    high           = Column(Integer, nullable=False, default=0)
+    medium         = Column(Integer, nullable=False, default=0)
+    low            = Column(Integer, nullable=False, default=0)
+    info           = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("ix_snap_tag_time", "image_tag_id", "imported_at"),
+    )
+
+
 # ══════════════════════════════════════════════════════════════════
 # DB setup
 # ══════════════════════════════════════════════════════════════════

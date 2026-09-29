@@ -12,11 +12,50 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from models import Application, ImageTag, Scan, Finding
+from models import Application, ImageTag, Scan, Finding, ScanSnapshot
 from parsers.base import ParseResult
 
 # Statuses set by a human that must survive a re-scan.
 _TRIAGED = {"mitigated", "false_positive", "accepted"}
+
+# How many import snapshots to keep per image tag (for the Analytics trend).
+_SNAPSHOT_KEEP = 20
+
+
+def _record_snapshot(db: Session, app: Application, image_tag: ImageTag) -> None:
+    """Append a point-in-time snapshot of the tag's finding posture, then prune
+    to the most recent ``_SNAPSHOT_KEEP`` rows for that tag. Lets the trend show
+    progress across re-imports into the same tag (e.g. ``latest``)."""
+    findings = [f for s in image_tag.scans for f in s.findings]
+    sev = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for f in findings:
+        if f.severity in sev:
+            sev[f.severity] += 1
+    db.add(ScanSnapshot(
+        application_id=app.id,
+        image_tag_id=image_tag.id,
+        tag=image_tag.tag,
+        imported_at=datetime.utcnow(),
+        total=len(findings),
+        open=sum(1 for f in findings if f.status == "open"),
+        mitigated=sum(1 for f in findings if f.status in _TRIAGED),
+        critical=sev["critical"], high=sev["high"], medium=sev["medium"],
+        low=sev["low"], info=sev["info"],
+    ))
+    db.flush()
+    stale = (
+        db.query(ScanSnapshot.id)
+        .filter(ScanSnapshot.image_tag_id == image_tag.id)
+        .order_by(ScanSnapshot.imported_at.desc(), ScanSnapshot.id.desc())
+        .offset(_SNAPSHOT_KEEP)
+        .all()
+    )
+    if stale:
+        (
+            db.query(ScanSnapshot)
+            .filter(ScanSnapshot.id.in_([s[0] for s in stale]))
+            .delete(synchronize_session=False)
+        )
 
 
 def get_or_create_application(
@@ -172,4 +211,8 @@ def persist_scan(
 
     db.commit()
     db.refresh(scan)
+
+    # Preserve a history point for the Analytics trend, then persist.
+    _record_snapshot(db, app, image_tag)
+    db.commit()
     return scan

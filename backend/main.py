@@ -1040,7 +1040,7 @@ def health():
 # ══════════════════════════════════════════════════════════════════
 from fastapi import UploadFile, File, Form, Header, BackgroundTasks
 
-from models import Application, ImageTag, Scan, Finding, ApiKey
+from models import Application, ImageTag, Scan, Finding, ApiKey, ScanSnapshot
 import parsers
 import ingest
 import serializers
@@ -1163,6 +1163,41 @@ def tag_findings(tag_id: str, db: Session = Depends(get_db), user: User = Depend
     for s in tag.scans:
         out.extend(serializers.finding_dict(f) for f in _ordered_findings(s.findings))
     return out
+
+
+@app.get("/api/tags/{tag_id}/snapshots")
+def tag_snapshots(tag_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """History of this tag's finding posture per import (oldest → newest), for
+    the Analytics trend. Falls back to a single current-state point when the tag
+    predates snapshot recording."""
+    tag = db.query(ImageTag).filter(ImageTag.id == tag_id).first()
+    if not tag or not _app_visible(user, tag.application):
+        raise HTTPException(status_code=404, detail="Tag not found")
+    rows = (
+        db.query(ScanSnapshot)
+        .filter(ScanSnapshot.image_tag_id == tag_id)
+        .order_by(ScanSnapshot.imported_at.asc(), ScanSnapshot.id.asc())
+        .all()
+    )
+    if rows:
+        return [serializers.snapshot_dict(s) for s in rows]
+    # No history yet: synthesize the current state as one point.
+    findings = [f for s in tag.scans for f in s.findings]
+    resolved = {"mitigated", "false_positive", "accepted"}
+    sev = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for f in findings:
+        if f.severity in sev:
+            sev[f.severity] += 1
+    latest = max((s.scanned_at for s in tag.scans if s.scanned_at), default=tag.created_at)
+    return [{
+        "id": tag.id,
+        "tag": tag.tag,
+        "importedAt": serializers.iso(latest),
+        "total": len(findings),
+        "open": sum(1 for f in findings if f.status == "open"),
+        "mitigated": sum(1 for f in findings if f.status in resolved),
+        "findings": sev,
+    }]
 
 
 @app.get("/api/findings")

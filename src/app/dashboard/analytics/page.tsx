@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { type Application } from "@/lib/mock-data";
-import { useApplications } from "@/lib/api";
+import { useApplications, useTagSnapshots } from "@/lib/api";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -49,6 +49,15 @@ function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toISOString().slice(0, 10);
+}
+
+// Short axis label for an import time, e.g. "09-29 14:05".
+function fmtTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 interface ProjectGroup {
@@ -174,6 +183,7 @@ export default function AnalyticsPage() {
   const { applications, loading, error } = useApplications();
   const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
   const [selectedServiceId, setSelectedServiceId] = useState<string | undefined>(undefined);
+  const [selectedTagId, setSelectedTagId] = useState<string | undefined>(undefined);
 
   // Group services by their project prefix, ordered by scan volume.
   const projects: ProjectGroup[] = useMemo(() => {
@@ -216,6 +226,31 @@ export default function AnalyticsPage() {
 
   const selected = applications.find((a) => a.id === selectedServiceId);
 
+  // Tags of the selected service, newest first.
+  const serviceTags = useMemo(
+    () =>
+      selected
+        ? [...selected.imageTags].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          )
+        : [],
+    [selected],
+  );
+
+  // Default to the newest tag when the service changes.
+  useEffect(() => {
+    if (serviceTags.length === 0) {
+      if (selectedTagId) setSelectedTagId(undefined);
+      return;
+    }
+    if (!selectedTagId || !serviceTags.some((t) => t.id === selectedTagId)) {
+      setSelectedTagId(serviceTags[0].id);
+    }
+  }, [serviceTags, selectedTagId]);
+
+  const selectedTag = serviceTags.find((t) => t.id === selectedTagId);
+  const { snapshots } = useTagSnapshots(selectedTagId);
+
   const projectItems: ComboItem[] = projects.map((p) => ({
     value: p.project,
     label: <span className="font-medium">{p.project}</span>,
@@ -230,17 +265,23 @@ export default function AnalyticsPage() {
     hint: `${scanCountOf(a)} scan${scanCountOf(a) !== 1 ? "s" : ""}`,
   }));
 
-  // Trend per build (image tag), chronological — total findings vs mitigated.
-  const trend = useMemo(() => {
-    if (!selected) return [];
-    return [...selected.imageTags]
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-      .map((t) => ({
-        build: t.tag,
-        Findings: t.scans.reduce((s, sc) => s + (sc.total ?? 0), 0),
-        Mitigated: t.scans.reduce((s, sc) => s + (sc.resolved ?? 0), 0),
-      }));
-  }, [selected]);
+  const tagItems: ComboItem[] = serviceTags.map((t) => ({
+    value: t.id,
+    label: <span className="font-medium">{t.tag}</span>,
+    keywords: t.tag.toLowerCase(),
+  }));
+
+  // Trend from the selected tag's per-import snapshots (oldest → newest), so
+  // progress is visible even when re-imported into the same tag (e.g. latest).
+  const trend = useMemo(
+    () =>
+      snapshots.map((p, i) => ({
+        point: fmtTime(p.importedAt) || `#${i + 1}`,
+        Findings: p.total,
+        Mitigated: p.mitigated,
+      })),
+    [snapshots],
+  );
 
   const scanCount = selected ? scanCountOf(selected) : 0;
   const builds = selected ? selected.imageTags.length : 0;
@@ -275,10 +316,24 @@ export default function AnalyticsPage() {
             <Combobox
               items={serviceItems}
               value={selectedServiceId}
-              onChange={setSelectedServiceId}
+              onChange={(v) => {
+                setSelectedServiceId(v);
+                setSelectedTagId(undefined); // reset; effect picks the newest tag
+              }}
               placeholder="Select a service…"
               searchPlaceholder="Search service…"
               disabled={!activeGroup}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-500">Tag</label>
+            <Combobox
+              items={tagItems}
+              value={selectedTagId}
+              onChange={setSelectedTagId}
+              placeholder="Select a tag…"
+              searchPlaceholder="Search tag…"
+              disabled={!selected || serviceTags.length === 0}
             />
           </div>
         </div>
@@ -300,8 +355,8 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatTile icon={ScanLine} label="Total scans" value={scanCount} accent="bg-indigo-50 text-indigo-600" />
               <StatTile icon={Layers} label="Builds (image tags)" value={builds} accent="bg-slate-100 text-slate-600" />
-              <StatTile icon={Bug} label="Findings (latest build)" value={latestTotal} accent="bg-rose-50 text-rose-600" />
-              <StatTile icon={ShieldCheck} label="Mitigated (latest build)" value={latestMitigated} accent="bg-teal-50 text-teal-600" />
+              <StatTile icon={Bug} label="Findings (latest import)" value={latestTotal} accent="bg-rose-50 text-rose-600" />
+              <StatTile icon={ShieldCheck} label="Mitigated (latest import)" value={latestMitigated} accent="bg-teal-50 text-teal-600" />
             </div>
 
             {/* Trend chart (template — re-renders for the selected service) */}
@@ -309,19 +364,20 @@ export default function AnalyticsPage() {
               <CardHeader className="pb-2 px-5 pt-5">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <TrendingDown className="h-4 w-4 text-slate-400" />
-                  Findings vs Mitigated — {selectedProject}/{serviceOf(selected.name)}
+                  Findings vs Mitigated — {serviceOf(selected.name)}
+                  {selectedTag ? <span className="text-slate-400"> : {selectedTag.tag}</span> : null}
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-5">
                 {trend.length === 0 ? (
                   <p className="py-12 text-center text-sm text-slate-400">
-                    No builds scanned yet for this service.
+                    No imports recorded yet for this tag.
                   </p>
                 ) : (
                   <ResponsiveContainer width="100%" height={300}>
                     <LineChart data={trend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis dataKey="build" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="point" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                       <Tooltip
                         contentStyle={{
