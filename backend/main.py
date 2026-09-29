@@ -1340,6 +1340,77 @@ def import_scan(
     }
 
 
+@app.get("/api/scan-summary")
+def scan_summary(
+    request: Request,
+    app_name: str,
+    tag: str,
+    db: Session = Depends(get_db),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Current finding posture for one app+tag, for CI post-scan summaries.
+
+    Authenticated with the same API key as /api/import-scan, so a pipeline
+    can report the dashboard's real numbers after all its scans land. Returns
+    per-severity counts for open (active) findings and for the whole tag, plus
+    totals — computed with one grouped aggregate.
+    """
+    from sqlalchemy import func
+
+    _authorize_import(request, db, x_api_key)
+
+    app = db.query(Application).filter(Application.name == app_name.strip()).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"Application not found: {app_name}")
+    image_tag = (
+        db.query(ImageTag)
+        .filter(ImageTag.application_id == app.id, ImageTag.tag == tag.strip())
+        .first()
+    )
+    if not image_tag:
+        raise HTTPException(status_code=404, detail=f"Tag not found: {app_name}:{tag}")
+
+    scan_ids = [
+        s.id for s in db.query(Scan.id).filter(Scan.image_tag_id == image_tag.id).all()
+    ]
+
+    def _empty():
+        return {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+
+    open_sev, total_sev = _empty(), _empty()
+    total = open_count = mitigated = 0
+    _triaged = {"mitigated", "false_positive", "accepted"}
+    if scan_ids:
+        agg = (
+            db.query(Finding.severity, Finding.status, func.count().label("n"))
+            .filter(Finding.scan_id.in_(scan_ids))
+            .group_by(Finding.severity, Finding.status)
+            .all()
+        )
+        for severity, status, n in agg:
+            total += n
+            if severity in total_sev:
+                total_sev[severity] += n
+            if status == "open":
+                open_count += n
+                if severity in open_sev:
+                    open_sev[severity] += n
+            elif status in _triaged:
+                mitigated += n
+
+    return {
+        "app_name": app.name,
+        "tag": image_tag.tag,
+        "total": total,
+        "open": open_count,
+        "mitigated": mitigated,
+        # Active (open) findings by severity — the number CI summaries care about.
+        "severity": open_sev,
+        # All findings by severity regardless of triage status.
+        "severity_total": total_sev,
+    }
+
+
 # ── API keys (admin) ──────────────────────────────────────────────
 
 @app.get("/api/apikeys")
