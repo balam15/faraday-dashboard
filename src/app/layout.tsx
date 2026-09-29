@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+// Self-hosted Inter (bundled woff2 via @fontsource) so the production build
+// needs no network access to Google Fonts. Exposes the same `--font-inter`
+// CSS variable that globals.css maps onto `--font-sans`.
+import "@fontsource-variable/inter";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-});
+const interStyle = { "--font-inter": "'Inter Variable'" } as React.CSSProperties;
 
 export const metadata: Metadata = {
   title: "InfraShield Dashboard",
@@ -19,8 +18,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
-      <body className={`min-h-full flex flex-col font-sans ${inter.className}`}>
+    <html lang="en" className="h-full antialiased" style={interStyle}>
+      <body className="min-h-full flex flex-col font-sans">
         {children}
       </body>
     </html>
