@@ -15,6 +15,17 @@ SCANNER = "Trivy"
 DEFAULT_SCAN_TYPE = "Image Scan"
 FORMAT = "JSON"
 
+# Trivy reports what it scanned in the top-level "ArtifactType". Map it to a
+# scan type so a filesystem/SCA scan and an image scan of the same app+tag
+# don't collapse into one entry (they'd otherwise share scanner+scan_type).
+_ARTIFACT_SCAN_TYPE = {
+    "container_image": "Image Scan",
+    "rootfs": "Image Scan",
+    "vm": "Image Scan",
+    "filesystem": "SCA",
+    "repository": "SCA",
+}
+
 
 def _cvss_score(vuln: dict):
     cvss = vuln.get("CVSS") or {}
@@ -108,10 +119,13 @@ def parse(content: bytes) -> ParseResult:
     # Trivy schema v2 nests under "Results"; older output is a bare list.
     if isinstance(data, dict):
         results = data.get("Results") or []
+        scan_type = _ARTIFACT_SCAN_TYPE.get(data.get("ArtifactType"), DEFAULT_SCAN_TYPE)
     elif isinstance(data, list):
         results = data
+        scan_type = DEFAULT_SCAN_TYPE
     else:
         results = []
+        scan_type = DEFAULT_SCAN_TYPE
 
     findings: List[ParsedFinding] = []
     for res in results:
@@ -126,6 +140,6 @@ def parse(content: bytes) -> ParseResult:
     return ParseResult(
         findings=[f.normalized() for f in findings],
         scanner=SCANNER,
-        scan_type=DEFAULT_SCAN_TYPE,
+        scan_type=scan_type,
         format=FORMAT,
     )
