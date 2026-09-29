@@ -15,12 +15,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   AlertTriangle,
   CheckCircle2,
   ShieldX,
@@ -111,105 +105,94 @@ function StatusControl({
   );
 }
 
-function FindingDetail({
+function FindingDetailBody({
   finding,
-  open,
-  onClose,
   canManage,
   onChanged,
 }: {
-  finding: Finding | null;
-  open: boolean;
-  onClose: () => void;
+  finding: Finding;
   canManage: boolean;
   onChanged: (status: Finding["status"]) => void;
 }) {
-  if (!finding) return null;
   const status = statusConfig[finding.status];
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-base font-semibold text-slate-800 pr-4">
-            {finding.title}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 mt-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <SeverityBadge severity={finding.severity} />
-            <Badge variant="outline" className="text-xs border-slate-200">
-              {finding.scanner}
-            </Badge>
-            <Badge variant="outline" className="text-xs border-slate-200">
-              {finding.scanType}
-            </Badge>
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full font-medium ${status.badge}`}
-            >
-              {status.label}
-            </span>
-          </div>
+    <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <SeverityBadge severity={finding.severity} />
+        <Badge variant="outline" className="text-xs border-slate-200">
+          {finding.scanner}
+        </Badge>
+        <Badge variant="outline" className="text-xs border-slate-200">
+          {finding.scanType}
+        </Badge>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${status.badge}`}>
+          {status.label}
+        </span>
+      </div>
 
-          <StatusControl finding={finding} canManage={canManage} onChanged={onChanged} />
-          {finding.filePath && (
-            <div className="bg-slate-50 rounded-lg p-3">
-              <p className="text-xs font-medium text-slate-500 mb-1">Location</p>
-              <p className="font-mono text-sm text-slate-700">
-                {finding.filePath}
-                {finding.lineNumber && (
-                  <span className="text-blue-600">:{finding.lineNumber}</span>
-                )}
-              </p>
-            </div>
-          )}
-          {(finding.cwe || finding.cve) && (
-            <div className="flex items-center gap-3">
-              {finding.cwe && (
-                <a
-                  href={`https://cwe.mitre.org/data/definitions/${finding.cwe.replace("CWE-", "")}.html`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
-                >
-                  {finding.cwe}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-              {finding.cve && (
-                <a
-                  href={`https://nvd.nist.gov/vuln/detail/${finding.cve}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
-                >
-                  {finding.cve}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-          )}
-          <div>
-            <p className="text-xs font-medium text-slate-500 mb-1.5">Description</p>
-            <p className="text-sm text-slate-700 leading-relaxed">{finding.description}</p>
-          </div>
-          {finding.remediation && (
-            <div className="bg-green-50 border border-green-100 rounded-lg p-3">
-              <p className="text-xs font-medium text-green-700 mb-1">Remediation</p>
-              <p className="text-sm text-green-800">{finding.remediation}</p>
-            </div>
-          )}
-          <p className="text-xs text-slate-400">
-            Found:{" "}
-            {new Date(finding.foundAt).toLocaleDateString("en-US", {
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-            })}
+      <StatusControl finding={finding} canManage={canManage} onChanged={onChanged} />
+
+      {finding.filePath && (
+        <div className="bg-slate-50 rounded-lg p-3">
+          <p className="text-xs font-medium text-slate-500 mb-1">Location</p>
+          <p className="font-mono text-sm text-slate-700">
+            {finding.filePath}
+            {finding.lineNumber && <span className="text-blue-600">:{finding.lineNumber}</span>}
           </p>
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+
+      {(finding.cwe || finding.cve) && (
+        <div className="flex items-center gap-3">
+          {finding.cwe && (
+            <a
+              href={`https://cwe.mitre.org/data/definitions/${finding.cwe.replace("CWE-", "")}.html`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
+            >
+              {finding.cwe}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          {finding.cve && (
+            <a
+              href={`https://nvd.nist.gov/vuln/detail/${finding.cve}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
+            >
+              {finding.cve}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
+
+      {finding.description && (
+        <div>
+          <p className="text-xs font-medium text-slate-500 mb-1.5">Description</p>
+          <p className="text-sm text-slate-700 leading-relaxed">{finding.description}</p>
+        </div>
+      )}
+
+      {finding.remediation && (
+        <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+          <p className="text-xs font-medium text-green-700 mb-1">Remediation</p>
+          <p className="text-sm text-green-800">{finding.remediation}</p>
+        </div>
+      )}
+
+      <p className="text-xs text-slate-400">
+        Found:{" "}
+        {new Date(finding.foundAt).toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        })}
+      </p>
+    </div>
   );
 }
 
@@ -217,15 +200,13 @@ export default function FindingsPage() {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [scannerFilter, setScannerFilter] = useState("all");
-  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { findings: mockFindings, reload } = useFindings();
   const { me } = useMe();
   const canManage = !!me?.permissions.includes("manage_findings");
 
-  function handleStatusChanged(next: Finding["status"]) {
-    setSelectedFinding((f) => (f ? { ...f, status: next } : f));
+  function handleStatusChanged() {
     reload();
   }
 
@@ -326,55 +307,64 @@ export default function FindingsPage() {
               filtered.map((finding) => {
                 const status = statusConfig[finding.status];
                 const StatusIcon = status.icon;
+                const expanded = expandedId === finding.id;
                 return (
-                  <button
-                    key={finding.id}
-                    onClick={() => {
-                      setSelectedFinding(finding);
-                      setDialogOpen(true);
-                    }}
-                    className="w-full text-left flex items-start gap-3 px-5 py-4 border-b border-slate-50 hover:bg-slate-50 transition-colors group"
-                  >
-                    <StatusIcon className={`h-4 w-4 mt-0.5 flex-shrink-0 ${status.color}`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">
-                        {finding.title}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-xs text-slate-400">{finding.scanner}</span>
-                        {finding.filePath && (
-                          <span className="flex items-center gap-1 text-xs text-slate-400 font-mono">
-                            <FileCode2 className="h-3 w-3" />
-                            {finding.filePath}
-                            {finding.lineNumber && `:${finding.lineNumber}`}
-                          </span>
-                        )}
-                        {finding.cwe && <span className="text-xs text-slate-400">{finding.cwe}</span>}
-                        {finding.cve && <span className="text-xs text-blue-500">{finding.cve}</span>}
+                  <div key={finding.id} className="border-b border-slate-50">
+                    <button
+                      onClick={() =>
+                        setExpandedId((id) => (id === finding.id ? null : finding.id))
+                      }
+                      aria-expanded={expanded}
+                      className={`w-full text-left flex items-start gap-3 px-5 py-4 hover:bg-slate-50 transition-colors group ${
+                        expanded ? "bg-slate-50" : ""
+                      }`}
+                    >
+                      <StatusIcon className={`h-4 w-4 mt-0.5 flex-shrink-0 ${status.color}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">
+                          {finding.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-xs text-slate-400">{finding.scanner}</span>
+                          {finding.filePath && (
+                            <span className="flex items-center gap-1 text-xs text-slate-400 font-mono">
+                              <FileCode2 className="h-3 w-3" />
+                              {finding.filePath}
+                              {finding.lineNumber && `:${finding.lineNumber}`}
+                            </span>
+                          )}
+                          {finding.cwe && <span className="text-xs text-slate-400">{finding.cwe}</span>}
+                          {finding.cve && <span className="text-xs text-blue-500">{finding.cve}</span>}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <SeverityBadge severity={finding.severity} />
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${status.badge}`}>
-                        {status.label}
-                      </span>
-                      <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-500" />
-                    </div>
-                  </button>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <SeverityBadge severity={finding.severity} />
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${status.badge}`}>
+                          {status.label}
+                        </span>
+                        <ChevronRight
+                          className={`h-3.5 w-3.5 text-slate-300 group-hover:text-slate-500 transition-transform ${
+                            expanded ? "rotate-90" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {expanded && (
+                      <div className="px-5 pb-4 pt-1 bg-slate-50/60">
+                        <FindingDetailBody
+                          finding={finding}
+                          canManage={canManage}
+                          onChanged={handleStatusChanged}
+                        />
+                      </div>
+                    )}
+                  </div>
                 );
               })
             )}
           </CardContent>
         </Card>
       </div>
-
-      <FindingDetail
-        finding={selectedFinding}
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        canManage={canManage}
-        onChanged={handleStatusChanged}
-      />
     </div>
   );
 }

@@ -359,8 +359,9 @@ export default function AnalyticsPage() {
               <StatTile icon={ShieldCheck} label="Mitigated (latest import)" value={latestMitigated} accent="bg-teal-50 text-teal-600" />
             </div>
 
-            {/* Trend chart (template — re-renders for the selected service) */}
-            <Card className="border-0 shadow-sm">
+            {/* Trend chart (template — re-renders for the selected service).
+                Constrained width + centered so it doesn't stretch edge-to-edge. */}
+            <Card className="border-0 shadow-sm mx-auto w-full max-w-3xl">
               <CardHeader className="pb-2 px-5 pt-5">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <TrendingDown className="h-4 w-4 text-slate-400" />
