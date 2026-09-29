@@ -830,7 +830,7 @@ function CoverPage({ data }: { data: ReportData }) {
     <Page size="A4" style={styles.coverPage}>
       {/* Top navigation bar */}
       <View style={styles.coverTopBar}>
-        <Text style={styles.coverTopBarTitle}>INFRASHIELD DASHBOARD</Text>
+        <Text style={styles.coverTopBarTitle}>VULNERA DASHBOARD</Text>
         <Text style={styles.coverTopBarDate}>
           {formatDateTime(data.reportGeneratedAt)}
         </Text>
@@ -1186,9 +1186,9 @@ export function generateReportPDF(data: ReportData) {
   return (
     <Document
       title={`Security Scan Report — ${data.appName}`}
-      author="InfraShield Dashboard"
+      author="Vulnera Dashboard"
       subject={`Security assessment for ${data.appName} ${data.imageTag}`}
-      creator="InfraShield Security Dashboard"
+      creator="Vulnera Security Dashboard"
       producer="@react-pdf/renderer"
     >
       {/* 1. Cover Page */}

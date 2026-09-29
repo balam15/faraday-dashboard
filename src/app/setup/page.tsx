@@ -94,7 +94,7 @@ export default function SetupPage() {
                 </div>
                 <div>
                   <h1 className="text-xl font-bold text-slate-800">Initial Setup</h1>
-                  <p className="text-xs text-slate-400">InfraShield Dashboard · First Run</p>
+                  <p className="text-xs text-slate-400">Vulnera Dashboard · First Run</p>
                 </div>
               </div>
               <p className="text-sm text-slate-500 mt-3 leading-relaxed">
@@ -260,7 +260,7 @@ export default function SetupPage() {
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">
-          InfraShield Dashboard v1.0.0
+          Vulnera Dashboard v1.0.0
         </p>
       </div>
     </div>

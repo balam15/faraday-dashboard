@@ -101,7 +101,7 @@ export default function LoginPage() {
             {/* Logo + title */}
             <div className="mb-7">
               <MaybankLogo width={150} height={41} color="#000" className="mb-4" />
-              <h1 className="text-xl font-bold text-slate-800">InfraShield Dashboard</h1>
+              <h1 className="text-xl font-bold text-slate-800">Vulnera Dashboard</h1>
               <p className="text-sm text-slate-400 mt-0.5">Security Scanning Platform</p>
             </div>
 
@@ -175,7 +175,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">
-          InfraShield Dashboard v1.0.0
+          Vulnera Dashboard v1.0.0
         </p>
       </div>
     </div>

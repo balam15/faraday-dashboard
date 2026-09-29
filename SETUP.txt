@@ -1,5 +1,5 @@
 ==============================================================================
- InfraShield Dashboard — Panduan Setup
+ Vulnera Dashboard — Panduan Setup
  Maybank Indonesia · Digital Infrastructure
 ==============================================================================
 
@@ -36,28 +36,28 @@ Menghentikan:
 ------------------------------------------------------------------------------
 3. JALANKAN DARI IMAGE DOCKER HUB (tanpa build)
 ------------------------------------------------------------------------------
-    docker pull bigbo55ishere28/infrashield:1.0.0
-    IMAGE=bigbo55ishere28/infrashield:1.0.0 ./start.sh
+    docker pull bigbo55ishere28/vulnera:1.3.8
+    IMAGE=bigbo55ishere28/vulnera:1.3.8 ./start.sh
 
 Atau manual tanpa script:
 
-    docker network create infrashield-net
+    docker network create vulnera-net
 
-    docker run -d --name infrashield-db --network infrashield-net \
+    docker run -d --name vulnera-db --network vulnera-net \
       -e POSTGRES_USER=faraday -e POSTGRES_PASSWORD=ganti_password \
       -e POSTGRES_DB=faraday \
-      -v infrashield-pgdata:/var/lib/postgresql/data \
+      -v vulnera-pgdata:/var/lib/postgresql/data \
       postgres:16-alpine
 
-    docker run -d --name infrashield-app --network infrashield-net -p 3000:3000 \
-      -e DATABASE_URL="postgresql+psycopg://faraday:ganti_password@infrashield-db:5432/faraday" \
+    docker run -d --name vulnera-app --network vulnera-net -p 3000:3000 \
+      -e DATABASE_URL="postgresql+psycopg://faraday:ganti_password@vulnera-db:5432/faraday" \
       -e SECRET_KEY="isi_kunci_acak_panjang" \
       -e COOKIE_SECURE=true \
-      -v infrashield-appdata:/data \
-      bigbo55ishere28/infrashield:1.0.0
+      -v vulnera-appdata:/data \
+      bigbo55ishere28/vulnera:1.3.8
 
 (Catatan: script start.sh memakai nama container faraday-app/faraday-db.
- Perintah manual di atas memakai nama infrashield-* agar tidak bentrok.)
+ Perintah manual di atas memakai nama vulnera-* agar tidak bentrok.)
 
 
 ------------------------------------------------------------------------------
@@ -140,8 +140,8 @@ Dari source:
     ./start.sh --build
 
 Dari Docker Hub:
-    docker pull bigbo55ishere28/infrashield:1.0.0
-    IMAGE=bigbo55ishere28/infrashield:1.0.0 ./start.sh
+    docker pull bigbo55ishere28/vulnera:1.3.8
+    IMAGE=bigbo55ishere28/vulnera:1.3.8 ./start.sh
 Data tetap aman (tersimpan di volume PostgreSQL).
 
 

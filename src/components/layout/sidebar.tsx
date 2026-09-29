@@ -96,7 +96,7 @@ export function Sidebar() {
         <MaybankLogo width={150} height={41} color="#ffffff" />
         <div>
           <p className="font-semibold text-white text-sm leading-tight">
-            InfraShield Dashboard
+            Vulnera Dashboard
           </p>
           <p className="text-[11px] text-slate-400">Security Scanning</p>
         </div>

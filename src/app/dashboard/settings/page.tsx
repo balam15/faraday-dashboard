@@ -1124,7 +1124,7 @@ export default function SettingsPage() {
                       Trusted Certificates
                     </CardTitle>
                     <p className="text-xs text-slate-500 mt-1">
-                      Import CA or server certificates so InfraShield can make secure
+                      Import CA or server certificates so Vulnera can make secure
                       outbound connections (e.g. LDAPS to an internal AD with a
                       private CA) with certificate verification turned on.
                     </p>
@@ -1333,7 +1333,7 @@ export default function SettingsPage() {
                         <Input
                           value={sys.smtp_from ?? ""}
                           onChange={(e) => setS("smtp_from", e.target.value)}
-                          placeholder="infrashield@maybank.co.id"
+                          placeholder="vulnera@maybank.co.id"
                           className="border-slate-200"
                         />
                       </div>

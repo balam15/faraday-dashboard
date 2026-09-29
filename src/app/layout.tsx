@@ -8,7 +8,7 @@ import "./globals.css";
 const interStyle = { "--font-inter": "'Inter Variable'" } as React.CSSProperties;
 
 export const metadata: Metadata = {
-  title: "InfraShield Dashboard",
+  title: "Vulnera Dashboard",
   description: "Security scanning dashboard — SAST, DAST, Image Scanning",
 };
 

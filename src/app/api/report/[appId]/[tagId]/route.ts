@@ -68,7 +68,7 @@ export async function GET(
   const buffer = await renderToBuffer(pdfDoc);
   const uint8 = new Uint8Array(buffer);
 
-  const filename = `infrashield-report-${app.name}-${imageTag.tag}-${new Date().toISOString().slice(0, 10)}.pdf`;
+  const filename = `vulnera-report-${app.name}-${imageTag.tag}-${new Date().toISOString().slice(0, 10)}.pdf`;
 
   return new NextResponse(uint8, {
     status: 200,

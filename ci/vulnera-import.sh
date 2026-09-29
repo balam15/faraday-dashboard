@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Drop-in replacement for defectdojo-import.sh — pushes a scan report to the
-# InfraShield Dashboard instead of DefectDojo.
+# Vulnera Dashboard instead of DefectDojo.
 #
 # Same call signature as before, so the scan scripts don't change:
-#   infrashield-import.sh <SCAN_TYPE> <REPORT_FILE> [<TAGS>] [<TEST_TITLE>]
+#   vulnera-import.sh <SCAN_TYPE> <REPORT_FILE> [<TAGS>] [<TEST_TITLE>]
 #
 # Required environment (set these in the Jenkins job / credentials):
-#   DASHBOARD_URL      e.g. http://infrashield:3000   (no trailing slash)
-#   DD_API_KEY         the InfraShield API key (Settings -> API Keys, frd_live_...)
+#   DASHBOARD_URL      e.g. http://vulnera:3000   (no trailing slash)
+#   DD_API_KEY         the Vulnera API key (Settings -> API Keys, frd_live_...)
 #                      (reusing DD_API_KEY keeps the scan scripts' `if [ -n
 #                       "${DD_API_KEY}" ]` guard working unchanged)
 #   PROJECT            e.g. opsflow
