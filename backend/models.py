@@ -234,6 +234,10 @@ class ScanSnapshot(Base):
     application_id = Column(String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
     image_tag_id   = Column(String(36), ForeignKey("image_tags.id", ondelete="CASCADE"), nullable=False, index=True)
     tag            = Column(String(256), nullable=False)
+    # Identifies the CI build/run that produced this snapshot (e.g. Jenkins
+    # BUILD_TAG). All imports of one build share it, so they collapse into a
+    # single trend point instead of one point per scanner report.
+    build_id       = Column(String(128), nullable=True, index=True)
     imported_at    = Column(DateTime, default=datetime.utcnow, index=True)
     total          = Column(Integer, nullable=False, default=0)
     open           = Column(Integer, nullable=False, default=0)

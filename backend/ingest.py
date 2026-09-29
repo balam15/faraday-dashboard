@@ -7,7 +7,7 @@ run of the same scanner so re-scans don't reset a human decision.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -21,27 +21,72 @@ _TRIAGED = {"mitigated", "false_positive", "accepted"}
 # How many import snapshots to keep per image tag (for the Analytics trend).
 _SNAPSHOT_KEEP = 20
 
+# Imports without a build id that land within this window join the previous
+# snapshot instead of adding a new point (best-effort grouping of one build's
+# scanners when the CI doesn't pass a build id).
+_SNAPSHOT_COALESCE_MINUTES = 20
 
-def _record_snapshot(db: Session, app: Application, image_tag: ImageTag) -> None:
-    """Append a point-in-time snapshot of the tag's finding posture, then prune
-    to the most recent ``_SNAPSHOT_KEEP`` rows for that tag. Lets the trend show
-    progress across re-imports into the same tag (e.g. ``latest``)."""
+
+def _record_snapshot(
+    db: Session, app: Application, image_tag: ImageTag, build_id: Optional[str] = None,
+) -> None:
+    """Record the tag's finding posture as one Analytics trend point.
+
+    A CI build imports several scanner reports, each as its own scan. To show
+    one point per build (not per report), all imports sharing a ``build_id``
+    update the same snapshot. Without a build id, imports within a short window
+    are coalesced by time. Pruned to the most recent ``_SNAPSHOT_KEEP`` rows."""
     findings = [f for s in image_tag.scans for f in s.findings]
     sev = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in findings:
         if f.severity in sev:
             sev[f.severity] += 1
-    db.add(ScanSnapshot(
-        application_id=app.id,
-        image_tag_id=image_tag.id,
-        tag=image_tag.tag,
-        imported_at=datetime.utcnow(),
+    counts = dict(
         total=len(findings),
         open=sum(1 for f in findings if f.status == "open"),
         mitigated=sum(1 for f in findings if f.status in _TRIAGED),
         critical=sev["critical"], high=sev["high"], medium=sev["medium"],
         low=sev["low"], info=sev["info"],
-    ))
+    )
+
+    # Find the snapshot this import belongs to (same build, or a recent one).
+    target = None
+    if build_id:
+        target = (
+            db.query(ScanSnapshot)
+            .filter(
+                ScanSnapshot.image_tag_id == image_tag.id,
+                ScanSnapshot.build_id == build_id,
+            )
+            .first()
+        )
+    else:
+        cutoff = datetime.utcnow() - timedelta(minutes=_SNAPSHOT_COALESCE_MINUTES)
+        target = (
+            db.query(ScanSnapshot)
+            .filter(
+                ScanSnapshot.image_tag_id == image_tag.id,
+                ScanSnapshot.build_id.is_(None),
+                ScanSnapshot.imported_at >= cutoff,
+            )
+            .order_by(ScanSnapshot.imported_at.desc())
+            .first()
+        )
+
+    if target is not None:
+        for key, value in counts.items():
+            setattr(target, key, value)
+        target.imported_at = datetime.utcnow()
+        target.tag = image_tag.tag
+    else:
+        db.add(ScanSnapshot(
+            application_id=app.id,
+            image_tag_id=image_tag.id,
+            tag=image_tag.tag,
+            build_id=build_id,
+            imported_at=datetime.utcnow(),
+            **counts,
+        ))
     db.flush()
     stale = (
         db.query(ScanSnapshot.id)
@@ -104,6 +149,7 @@ def persist_scan(
     scan_type_override: Optional[str] = None,
     app_type: str = "service",
     team: str = "",
+    build_id: Optional[str] = None,
 ) -> Scan:
     scanner = scanner_override or result.scanner
     scan_type = scan_type_override or result.scan_type
@@ -213,6 +259,6 @@ def persist_scan(
     db.refresh(scan)
 
     # Preserve a history point for the Analytics trend, then persist.
-    _record_snapshot(db, app, image_tag)
+    _record_snapshot(db, app, image_tag, build_id=build_id)
     db.commit()
     return scan

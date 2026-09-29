@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Scan reports (e.g. a Trivy image scan of a full base image) can be tens of
+  // MB. The proxy buffers the request body and defaults to a 10MB cap, which
+  // truncated large /api/import-scan uploads and reset the connection (502/500).
+  // Raise it so big reports proxy through to the backend intact.
+  experimental: {
+    proxyClientMaxBodySize: "256mb",
+  },
   async rewrites() {
     // Proxy backend API calls to FastAPI (port 8000).
     // Everything under /api/* goes to the backend EXCEPT /api/report/*,
@@ -21,6 +28,7 @@ const nextConfig: NextConfig = {
       "findings",
       "scanners",
       "import-scan",
+      "scan-summary",
       "apikeys",
       "certificates",
     ];
