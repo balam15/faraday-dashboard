@@ -133,11 +133,21 @@ def parse(content: bytes) -> ParseResult:
             if not help_text and full_desc and description != full_desc:
                 help_text = full_desc
             if not help_text:
-                # Linters like hadolint/ruff ship only a helpUri (a link to the
-                # rule's docs) — surface it so there's still actionable guidance.
+                # Linters like ruff ship only a helpUri (a link to the rule's
+                # docs) — surface it so there's still actionable guidance.
                 help_uri = rule.get("helpUri")
                 if help_uri:
                     help_text = f"See rule documentation: {help_uri}"
+            if not help_text and rule_id:
+                # hadolint's SARIF carries neither a rules array nor a helpUri,
+                # only the rule id (DL#### / SC####). These map to stable docs
+                # pages, so build the link from the id.
+                low_tool = (tool_name or "").lower()
+                rid = rule_id.upper()
+                if "hadolint" in low_tool and rid.startswith("DL") and rid[2:].isdigit():
+                    help_text = f"See rule documentation: https://github.com/hadolint/hadolint/wiki/{rid}"
+                elif "hadolint" in low_tool and rid.startswith("SC") and rid[2:].isdigit():
+                    help_text = f"See rule documentation: https://www.shellcheck.net/wiki/{rid}"
 
             findings.append(ParsedFinding(
                 title=title,
