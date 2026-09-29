@@ -322,7 +322,7 @@ export function ManageUsersSection() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-800">{user.name}</p>
                 <p className="text-xs text-slate-400">
-                  {user.username} · {user.email}
+                  {user.username}{user.email ? ` · ${user.email}` : ""}
                 </p>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
