@@ -2,6 +2,7 @@ from typing import Optional, Tuple
 from ldap3 import Server, Connection, ALL, SUBTREE, Tls
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
+import re
 import ssl
 
 from models import LdapConfig, LdapGroupMapping
@@ -35,6 +36,43 @@ def build_tls(db: Session, cfg: LdapConfig) -> Optional[Tls]:
     return Tls(validate=ssl.CERT_REQUIRED, ca_certs_data=ca_data)
 
 
+def _build_login_search_filter(cfg: LdapConfig, safe_username: str) -> str:
+    """Build the filter that locates the ONE user signing in.
+
+    The admin's configured `user_filter` serves two purposes at once:
+    restricting who may log in (e.g. only members of a specific AD group) and
+    locating the account. It may contain a `{username}` placeholder — which is
+    substituted directly — or be a membership/objectClass restriction with no
+    placeholder, in which case we AND a username match onto it so the search
+    resolves to a single user instead of every member of the group.
+
+    `safe_username` must already be escaped with escape_filter_chars.
+    """
+    attr = cfg.username_attr or "sAMAccountName"
+    raw = cfg.user_filter or f"({attr}={{username}})"
+    if "{username}" in raw:
+        search_filter = raw.replace("{username}", safe_username)
+    else:
+        # No placeholder → restriction-only filter; require the username too.
+        search_filter = f"(&{raw}({attr}={safe_username}))"
+    if not search_filter.startswith("("):
+        search_filter = f"({attr}={safe_username})"
+    return search_filter
+
+
+def _login_filter_group_dns(cfg: Optional[LdapConfig]) -> list[str]:
+    """Group DNs referenced by `memberOf=<DN>` clauses in the login filter.
+
+    Lets the directory-groups browser show only the groups that actually gate
+    login, instead of every group in the directory. Returns [] when the filter
+    has no such clause (then the browser falls back to listing all groups).
+    """
+    if not cfg or not cfg.user_filter:
+        return []
+    # An AD DN never contains an unescaped ')', so stop the match there.
+    return [m.strip() for m in re.findall(r"memberOf=([^)]+)", cfg.user_filter, re.IGNORECASE)]
+
+
 def verify_user_mapping(username: str, db: Session, cfg: Optional[LdapConfig] = None) -> dict:
     """Look a user up in the directory (service-account bind, no password
     check) and report the attributes and the role they would be granted.
@@ -65,13 +103,7 @@ def verify_user_mapping(username: str, db: Session, cfg: Optional[LdapConfig] = 
 
     try:
         safe_username = escape_filter_chars(username)
-        user_filter = cfg.user_filter or f"({cfg.username_attr}={{username}})"
-        search_filter = user_filter.replace("{username}", safe_username)
-        if "{username}" not in (cfg.user_filter or "{username}"):
-            # Filter had no placeholder — AND it with a username match.
-            search_filter = f"(&{user_filter}({cfg.username_attr}={safe_username}))"
-        if not search_filter.startswith("("):
-            search_filter = f"({cfg.username_attr}={safe_username})"
+        search_filter = _build_login_search_filter(cfg, safe_username)
 
         conn.search(
             search_base=cfg.base_dn,
@@ -155,11 +187,12 @@ def ldap_authenticate(
 
         # Build search filter. Escape the username so it can't inject LDAP
         # filter syntax (e.g. "*", ")(uid=*") — an auth bypass otherwise.
+        # When the configured filter is a membership restriction with no
+        # {username} placeholder (e.g. gating login to one AD group), a
+        # username match is AND-ed on so the search resolves to the single
+        # user signing in instead of the first member of the group.
         safe_username = escape_filter_chars(username)
-        user_filter = cfg.user_filter or f"({cfg.username_attr}={{username}})"
-        search_filter = user_filter.replace("{username}", safe_username)
-        if not search_filter.startswith("("):
-            search_filter = f"({cfg.username_attr}={safe_username})"
+        search_filter = _build_login_search_filter(cfg, safe_username)
 
         bind_conn.search(
             search_base=cfg.base_dn,
@@ -349,9 +382,20 @@ def list_directory_groups(db: Session, limit: int = 200) -> list[dict]:
     cfg = get_ldap_config(db)
     conn = _connect(db, cfg)
     try:
+        # If the login filter gates on group membership (memberOf=<DN> clauses),
+        # show only those groups; otherwise fall back to listing every group.
+        allowed_dns = _login_filter_group_dns(cfg)
+        if allowed_dns:
+            clauses = "".join(
+                f"(distinguishedName={escape_filter_chars(dn)})" for dn in allowed_dns
+            )
+            group_filter = f"(&(objectClass=group)(|{clauses}))"
+        else:
+            group_filter = "(objectClass=group)"
+
         conn.search(
             search_base=cfg.base_dn,
-            search_filter="(objectClass=group)",
+            search_filter=group_filter,
             search_scope=SUBTREE,
             attributes=["cn", "member"],
             paged_size=limit,
