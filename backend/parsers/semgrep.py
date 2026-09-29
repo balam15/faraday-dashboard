@@ -60,6 +60,16 @@ def parse(content: bytes) -> ParseResult:
         elif isinstance(raw_cve, str):
             cve = raw_cve
 
+        # Prefer an autofix; else point at the rule's references/source (Semgrep
+        # security rules rarely carry a fix, but almost always have a link).
+        fix = extra.get("fix") or meta.get("remediation")
+        if not fix:
+            src = meta.get("source")
+            if refs:
+                fix = f"See: {refs[0]}"
+            elif src:
+                fix = f"See rule: {src}"
+
         findings.append(ParsedFinding(
             title=title or "Semgrep finding",
             severity=_severity(extra.get("severity")),
@@ -68,7 +78,7 @@ def parse(content: bytes) -> ParseResult:
             cwe=_cwe(meta),
             cve=cve,
             description=str(message),
-            remediation=(extra.get("fix") or meta.get("remediation") or None),
+            remediation=(fix or None),
             unique_id=f"semgrep:{check_id}:{path}:{line}" if check_id else None,
             references=refs if isinstance(refs, list) else [],
         ).normalized())
