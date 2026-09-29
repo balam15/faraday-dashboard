@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 from models import Application, Finding, ImageTag, Scan, ScanSnapshot
 import scoring
 
@@ -125,3 +128,139 @@ def application_dict(app: Application) -> dict:
         "riskScore": max_risk,
         "totalFindings": total,
     }
+
+
+def applications_list(db: Session, allowed_names) -> list[dict]:
+    """Efficient bulk build for GET /api/apps.
+
+    Produces the same JSON shape as ``application_dict`` for each app, but
+    computes every finding count with ONE grouped aggregate query instead of
+    loading every Finding row — and selects plain columns so the ``selectin``
+    relationships (which would eagerly load all scans/findings) never fire.
+
+    ``allowed_names`` is None for full access, or an iterable of the application
+    names the user may see.
+    """
+    app_q = db.query(
+        Application.id, Application.name, Application.description,
+        Application.team, Application.type, Application.created_at,
+    )
+    if allowed_names is not None:
+        allowed = set(allowed_names)
+        if not allowed:
+            return []
+        app_q = app_q.filter(Application.name.in_(allowed))
+    app_rows = app_q.all()
+    if not app_rows:
+        return []
+    app_ids = [a.id for a in app_rows]
+
+    tag_rows = (
+        db.query(ImageTag.id, ImageTag.application_id, ImageTag.tag,
+                 ImageTag.digest, ImageTag.created_at)
+        .filter(ImageTag.application_id.in_(app_ids))
+        .all()
+    )
+    tag_ids = [t.id for t in tag_rows]
+
+    scan_rows = (
+        db.query(Scan.id, Scan.image_tag_id, Scan.scanner, Scan.scan_type,
+                 Scan.format, Scan.scanned_at, Scan.status)
+        .filter(Scan.image_tag_id.in_(tag_ids))
+        .all()
+        if tag_ids else []
+    )
+    scan_ids = [s.id for s in scan_rows]
+
+    # Single grouped aggregate: counts per (scan, severity, status).
+    sev_by_scan: dict = {}
+    open_by_scan: dict = {}
+    total_by_scan: dict = {}
+    resolved_by_scan: dict = {}
+    if scan_ids:
+        agg = (
+            db.query(Finding.scan_id, Finding.severity, Finding.status, func.count().label("n"))
+            .filter(Finding.scan_id.in_(scan_ids))
+            .group_by(Finding.scan_id, Finding.severity, Finding.status)
+            .all()
+        )
+        for scan_id, severity, status, n in agg:
+            sev = sev_by_scan.setdefault(scan_id, scoring.empty_counts())
+            if severity in sev:
+                sev[severity] += n
+            total_by_scan[scan_id] = total_by_scan.get(scan_id, 0) + n
+            if status in _RESOLVED:
+                resolved_by_scan[scan_id] = resolved_by_scan.get(scan_id, 0) + n
+            if status == _OPEN:
+                op = open_by_scan.setdefault(scan_id, scoring.empty_counts())
+                if severity in op:
+                    op[severity] += n
+
+    scans_grouped: dict = {}
+    for s in scan_rows:
+        scans_grouped.setdefault(s.image_tag_id, []).append(s)
+
+    tags_by_app: dict = {}
+    for t in tag_rows:
+        scan_dicts = []
+        tag_total = scoring.empty_counts()
+        tag_open = scoring.empty_counts()
+        last_scanned = None
+        for s in scans_grouped.get(t.id, []):
+            sev = sev_by_scan.get(s.id, scoring.empty_counts())
+            total = total_by_scan.get(s.id, 0)
+            resolved = resolved_by_scan.get(s.id, 0)
+            scan_dicts.append({
+                "id": s.id,
+                "scanner": s.scanner,
+                "scanType": s.scan_type,
+                "format": s.format,
+                "scannedAt": iso(s.scanned_at),
+                "status": s.status,
+                "findings": sev,
+                "total": total,
+                "resolved": resolved,
+                "resolvedPct": round(100 * resolved / total) if total else 0,
+            })
+            tag_total = scoring.add_counts(tag_total, sev)
+            tag_open = scoring.add_counts(tag_open, open_by_scan.get(s.id, scoring.empty_counts()))
+            if s.scanned_at and (last_scanned is None or s.scanned_at > last_scanned):
+                last_scanned = s.scanned_at
+        tags_by_app.setdefault(t.application_id, []).append({
+            "dict": {
+                "id": t.id,
+                "tag": t.tag,
+                "digest": t.digest,
+                "createdAt": iso(t.created_at),
+                "scans": scan_dicts,
+                "totalFindings": tag_total,
+                "riskScore": scoring.risk_score(tag_open),
+            },
+            "last_scanned": last_scanned,
+        })
+
+    out = []
+    for a in app_rows:
+        total = scoring.empty_counts()
+        max_risk = 0
+        last_scanned = None
+        image_tags = []
+        for te in tags_by_app.get(a.id, []):
+            td = te["dict"]
+            total = scoring.add_counts(total, td["totalFindings"])
+            max_risk = max(max_risk, td["riskScore"])
+            if te["last_scanned"] and (last_scanned is None or te["last_scanned"] > last_scanned):
+                last_scanned = te["last_scanned"]
+            image_tags.append(td)
+        out.append({
+            "id": a.id,
+            "name": a.name,
+            "description": a.description or "",
+            "team": a.team or "",
+            "type": a.type,
+            "imageTags": image_tags,
+            "lastScanned": iso(last_scanned) or iso(a.created_at),
+            "riskScore": max_risk,
+            "totalFindings": total,
+        })
+    return out

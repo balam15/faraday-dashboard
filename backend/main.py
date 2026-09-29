@@ -1079,13 +1079,8 @@ def require_import(
 
 @app.get("/api/apps")
 def list_apps(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    allowed = _accessible_app_names(user)
-    apps = db.query(Application).all()
-    return [
-        serializers.application_dict(a)
-        for a in apps
-        if allowed is None or a.name in allowed
-    ]
+    # Bulk builder: one grouped aggregate instead of loading every finding.
+    return serializers.applications_list(db, _accessible_app_names(user))
 
 
 @app.get("/api/apps/{app_id}")
@@ -1271,7 +1266,7 @@ def _authorize_import(request: Request, db: Session, x_api_key: Optional[str]) -
 
 
 @app.post("/api/import-scan")
-async def import_scan(
+def import_scan(
     request: Request,
     file: UploadFile = File(...),
     app_name: str = Form(...),
@@ -1285,9 +1280,12 @@ async def import_scan(
     db: Session = Depends(get_db),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
+    # Sync endpoint: Starlette runs it in a worker threadpool, so the CPU-bound
+    # parse + DB writes below never block the event loop. This keeps concurrent
+    # imports (continuous CI) and other requests responsive.
     identity = _authorize_import(request, db, x_api_key)
 
-    content = await file.read()
+    content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
 
