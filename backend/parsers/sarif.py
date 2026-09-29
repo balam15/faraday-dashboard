@@ -125,8 +125,19 @@ def parse(content: bytes) -> ParseResult:
             # HTML stripped so the guidance still shows up in the finding — but
             # not when we already used fullDescription as the description above.
             help_text = _rule_text(rule, "help")
+            if not help_text:
+                # Some tools put the guidance in help.markdown instead of .text.
+                help_node = rule.get("help")
+                if isinstance(help_node, dict) and help_node.get("markdown"):
+                    help_text = _strip_html(str(help_node["markdown"]))
             if not help_text and full_desc and description != full_desc:
                 help_text = full_desc
+            if not help_text:
+                # Linters like hadolint/ruff ship only a helpUri (a link to the
+                # rule's docs) — surface it so there's still actionable guidance.
+                help_uri = rule.get("helpUri")
+                if help_uri:
+                    help_text = f"See rule documentation: {help_uri}"
 
             findings.append(ParsedFinding(
                 title=title,

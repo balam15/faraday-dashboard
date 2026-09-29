@@ -63,6 +63,10 @@ def _parse_vulnerability(vuln: dict, target: str) -> ParsedFinding:
     remediation = None
     if fixed:
         remediation = f"Upgrade {pkg} to {fixed}."
+    else:
+        url = vuln.get("PrimaryURL")
+        if url:
+            remediation = f"No fixed version available yet. Details: {url}"
 
     desc_parts = []
     if pkg:
