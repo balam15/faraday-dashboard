@@ -11,7 +11,7 @@ from models import (
     LdapGroupMapping, Role, Activity, Certificate,
 )
 from auth import hash_password, verify_password, create_access_token, decode_token
-from ldap_auth import ldap_authenticate, resolve_role_from_groups
+from ldap_auth import ldap_authenticate, resolve_role_from_groups_ex
 import permissions
 import settings_store
 import mailer
@@ -262,20 +262,24 @@ def _try_local_login(db: Session, username: str, password: str) -> Optional[User
 def _try_ldap_login(db: Session, username: str, password: str) -> Optional[User]:
     """Authenticate against LDAP and upsert the user. None if LDAP rejects.
 
-    AD group mappings are authoritative: on every login the role and app access
-    are resolved from the user's AD groups (viewer with no app access when no
-    mapping matches), and take precedence over any manual dashboard edit. To
-    change an LDAP user's role, adjust their AD group mapping. Directory profile
-    attributes (email, display name) are refreshed too.
+    Hybrid role resolution:
+      * A matching AD group mapping is authoritative and is (re)applied on every
+        login, taking precedence over any manual dashboard edit.
+      * When NO group mapping matches, a new account defaults to viewer, but an
+        existing account's role/app access are left untouched — so an admin can
+        manually manage users who have no AD group mapping and the change sticks.
+    Directory profile attributes (email, display name) are refreshed either way.
     """
     success, user_info = ldap_authenticate(username, password, db)
     if not success or not user_info:
         return None
 
-    # AD is the source of truth for role + app access on every login.
-    role, allowed_apps = resolve_role_from_groups(user_info.get("groups", []), db)
+    role, allowed_apps, matched = resolve_role_from_groups_ex(
+        user_info.get("groups", []), db
+    )
     user = db.query(User).filter(User.username == user_info["username"]).first()
     if not user:
+        # First sign-in: role from the matching mapping, else viewer.
         user = User(
             username=user_info["username"],
             email=user_info.get("email"),
@@ -288,8 +292,11 @@ def _try_ldap_login(db: Session, username: str, password: str) -> Optional[User]
     else:
         if not user.is_active:
             raise HTTPException(status_code=401, detail="Account disabled")
-        user.role = role
-        user.allowed_apps = allowed_apps
+        # Only overwrite from AD when a group mapping actually matched; without
+        # one, keep the admin-managed role/app access instead of resetting it.
+        if matched:
+            user.role = role
+            user.allowed_apps = allowed_apps
         user.email = user_info.get("email") or user.email
         user.display_name = user_info.get("display_name") or user.display_name
     return user

@@ -262,6 +262,21 @@ def resolve_role_from_groups(groups: list[str], db: Session) -> Tuple[str, Optio
     (admin, which holds everything, always ranks highest). If no group matches,
     the user gets `viewer` with no app access until an admin grants some.
     """
+    role, apps, _matched = resolve_role_from_groups_ex(groups, db)
+    return role, apps
+
+
+def resolve_role_from_groups_ex(
+    groups: list[str], db: Session
+) -> Tuple[str, Optional[list], bool]:
+    """Like :func:`resolve_role_from_groups`, but also reports whether an AD
+    group mapping actually matched.
+
+    Returns ``(role, apps, matched)``. When ``matched`` is False no group
+    mapping applied and the role falls back to ``viewer`` — callers can use this
+    to decide whether AD should overwrite an existing (possibly admin-edited)
+    role or leave it alone.
+    """
     from models import Role
 
     def normalize(name: str) -> str:
@@ -280,11 +295,11 @@ def resolve_role_from_groups(groups: list[str], db: Session) -> Tuple[str, Optio
                 matched.append((role_rank[role], role, mapping.apps))
 
     if not matched:
-        return "viewer", []  # deny-by-default: no app access until granted
+        return "viewer", [], False  # deny-by-default: no app access until granted
 
     matched.sort(key=lambda x: x[0], reverse=True)
     _, best_role, best_apps = matched[0]
-    return best_role, best_apps
+    return best_role, best_apps, True
 
 
 # ─────────────────────────────────────────────
