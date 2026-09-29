@@ -1,6 +1,7 @@
 """SARIF 2.1.0 parser — used by MegaLinter, CodeQL, Semgrep, and many others."""
 from __future__ import annotations
 
+import html
 import json
 import re
 from typing import Dict, List, Optional
@@ -61,6 +62,31 @@ def _rule_text(rule: dict, key: str) -> str:
     return ""
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_BLANKS_RE = re.compile(r"[ \t]*\n[ \t]*")
+
+
+def _strip_html(text: str) -> str:
+    """Render a rule's HTML/Markdown-ish text as readable plain text.
+
+    MegaLinter rules often carry only ``fullDescription`` (frequently HTML),
+    so when there's no ``help`` we fall back to it. Unescape entities, turn
+    block tags into line breaks, drop the rest of the markup, and collapse
+    the leftover whitespace while keeping paragraph breaks.
+    """
+    if not text:
+        return ""
+    # Block-level tags become newlines so paragraphs/lists stay separated.
+    text = re.sub(r"(?i)<\s*br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</\s*(p|div|li|ul|ol|h[1-6]|tr|blockquote)\s*>", "\n", text)
+    text = _TAG_RE.sub("", text)
+    text = html.unescape(text)
+    # Normalize whitespace: trim each line, drop runs of blank lines.
+    text = _BLANKS_RE.sub("\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def parse(content: bytes) -> ParseResult:
     data = json.loads(content.decode("utf-8", "replace"))
     findings: List[ParsedFinding] = []
@@ -92,8 +118,15 @@ def parse(content: bytes) -> ParseResult:
                 file_path = (phys.get("artifactLocation") or {}).get("uri")
                 line_number = (phys.get("region") or {}).get("startLine")
 
-            description = message or _rule_text(rule, "fullDescription") or _rule_text(rule, "shortDescription")
+            full_desc = _strip_html(_rule_text(rule, "fullDescription"))
+            description = message or full_desc or _rule_text(rule, "shortDescription")
+            # Remediation: prefer the rule's dedicated help text; when a linter
+            # (e.g. MegaLinter) ships only fullDescription, fall back to it with
+            # HTML stripped so the guidance still shows up in the finding — but
+            # not when we already used fullDescription as the description above.
             help_text = _rule_text(rule, "help")
+            if not help_text and full_desc and description != full_desc:
+                help_text = full_desc
 
             findings.append(ParsedFinding(
                 title=title,
