@@ -260,14 +260,21 @@ def _try_local_login(db: Session, username: str, password: str) -> Optional[User
 
 
 def _try_ldap_login(db: Session, username: str, password: str) -> Optional[User]:
-    """Authenticate against LDAP and upsert the user. None if LDAP rejects."""
+    """Authenticate against LDAP and upsert the user. None if LDAP rejects.
+
+    AD group mappings seed the role and app access only when the account is
+    first created. On later logins the role and allowed_apps are left as-is, so
+    an admin's manual changes in the dashboard persist and are not reset from
+    AD. Directory profile attributes (email, display name) are still refreshed.
+    """
     success, user_info = ldap_authenticate(username, password, db)
     if not success or not user_info:
         return None
 
-    role, allowed_apps = resolve_role_from_groups(user_info.get("groups", []), db)
     user = db.query(User).filter(User.username == user_info["username"]).first()
     if not user:
+        # First sign-in: seed role + app access from AD group mappings.
+        role, allowed_apps = resolve_role_from_groups(user_info.get("groups", []), db)
         user = User(
             username=user_info["username"],
             email=user_info.get("email"),
@@ -280,8 +287,8 @@ def _try_ldap_login(db: Session, username: str, password: str) -> Optional[User]
     else:
         if not user.is_active:
             raise HTTPException(status_code=401, detail="Account disabled")
-        user.role = role
-        user.allowed_apps = allowed_apps
+        # Role and app access are admin-managed once the account exists — do
+        # NOT overwrite them from AD here. Only refresh profile attributes.
         user.email = user_info.get("email") or user.email
         user.display_name = user_info.get("display_name") or user.display_name
     return user
