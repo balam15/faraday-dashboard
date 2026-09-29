@@ -30,59 +30,31 @@ import {
 const COLOR_FINDINGS = "#4f46e5"; // total findings
 const COLOR_MITIGATED = "#0d9488"; // mitigated / resolved
 
-// "opsflow/sample-api" → { project: "opsflow", service: "sample-api" }
-function splitName(name: string): { project: string; service: string } {
+// "nexus/sample-api" → project "nexus", service "sample-api".
+// Names without a "/" are their own project (mirrors the Applications page).
+function projectOf(name: string): string {
   const i = name.indexOf("/");
-  return i === -1
-    ? { project: "", service: name }
-    : { project: name.slice(0, i), service: name.slice(i + 1) };
+  return i === -1 ? name : name.slice(0, i);
 }
-
-interface ServiceStat {
-  app: Application;
-  project: string;
-  service: string;
-  scanCount: number; // total scanner runs across all builds
-  builds: number; // number of image tags
-  latestTotal: number;
-  latestMitigated: number;
-  lastScanned: string | null;
-  risk: number;
+function serviceOf(name: string): string {
+  const i = name.indexOf("/");
+  return i === -1 ? name : name.slice(i + 1);
 }
 
 function scanCountOf(app: Application): number {
   return app.imageTags.reduce((n, t) => n + t.scans.length, 0);
 }
 
-function buildStat(app: Application): ServiceStat {
-  const { project, service } = splitName(app.name);
-  const tags = [...app.imageTags].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-  );
-  const latest = tags[tags.length - 1];
-  const latestTotal = latest
-    ? latest.scans.reduce((s, sc) => s + (sc.total ?? 0), 0)
-    : 0;
-  const latestMitigated = latest
-    ? latest.scans.reduce((s, sc) => s + (sc.resolved ?? 0), 0)
-    : 0;
-  return {
-    app,
-    project,
-    service,
-    scanCount: scanCountOf(app),
-    builds: app.imageTags.length,
-    latestTotal,
-    latestMitigated,
-    lastScanned: app.lastScanned ?? null,
-    risk: app.riskScore,
-  };
-}
-
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toISOString().slice(0, 10);
+}
+
+interface ProjectGroup {
+  project: string;
+  apps: Application[]; // services, sorted by scan count desc
+  totalScans: number;
 }
 
 function StatTile({
@@ -111,48 +83,48 @@ function StatTile({
   );
 }
 
-// Searchable service picker (combobox). base-ui Select isn't searchable, so
-// this is a small self-contained dropdown with a filter input.
-function ServicePicker({
-  apps,
+interface ComboItem {
+  value: string;
+  label: React.ReactNode; // styled display
+  keywords: string; // lowercase text used for search
+  hint?: string; // right-aligned muted text
+}
+
+// Small searchable dropdown (base-ui Select isn't searchable).
+function Combobox({
+  items,
   value,
   onChange,
+  placeholder,
+  searchPlaceholder,
+  disabled,
 }: {
-  apps: Application[];
+  items: ComboItem[];
   value: string | undefined;
-  onChange: (id: string) => void;
+  onChange: (v: string) => void;
+  placeholder: string;
+  searchPlaceholder: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const selected = apps.find((a) => a.id === value);
+  const selected = items.find((it) => it.value === value);
   const query = q.trim().toLowerCase();
-  const filtered = apps
-    .filter((a) => !query || a.name.toLowerCase().includes(query))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = items.filter((it) => !query || it.keywords.includes(query));
 
   return (
-    <div className="relative w-full sm:w-96">
+    <div className="relative w-full sm:w-72">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+        className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <span className="truncate">
-          {selected ? (
-            <>
-              {splitName(selected.name).project && (
-                <span className="text-slate-400">{splitName(selected.name).project}/</span>
-              )}
-              <span className="font-medium">{splitName(selected.name).service}</span>
-            </>
-          ) : (
-            <span className="text-slate-400">Select a service…</span>
-          )}
-        </span>
+        <span className="truncate">{selected ? selected.label : <span className="text-slate-400">{placeholder}</span>}</span>
         <ChevronsUpDown className="h-4 w-4 text-slate-400 shrink-0" />
       </button>
 
-      {open && (
+      {open && !disabled && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -162,25 +134,22 @@ function ServicePicker({
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search service…"
+                placeholder={searchPlaceholder}
                 className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
               />
             </div>
             <div className="max-h-64 overflow-auto p-1">
               {filtered.length === 0 && (
-                <p className="px-3 py-6 text-center text-sm text-slate-400">
-                  No services match.
-                </p>
+                <p className="px-3 py-6 text-center text-sm text-slate-400">No matches.</p>
               )}
-              {filtered.map((a) => {
-                const { project, service } = splitName(a.name);
-                const active = a.id === value;
+              {filtered.map((it) => {
+                const active = it.value === value;
                 return (
                   <button
-                    key={a.id}
+                    key={it.value}
                     type="button"
                     onClick={() => {
-                      onChange(a.id);
+                      onChange(it.value);
                       setOpen(false);
                       setQ("");
                     }}
@@ -188,13 +157,8 @@ function ServicePicker({
                       active ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-700"
                     }`}
                   >
-                    <span className="truncate">
-                      {project && <span className="text-slate-400">{project}/</span>}
-                      <span className="font-medium">{service}</span>
-                    </span>
-                    <span className="text-xs text-slate-400 shrink-0">
-                      {scanCountOf(a)} scan{scanCountOf(a) !== 1 ? "s" : ""}
-                    </span>
+                    <span className="truncate">{it.label}</span>
+                    {it.hint && <span className="text-xs text-slate-400 shrink-0">{it.hint}</span>}
                   </button>
                 );
               })}
@@ -208,26 +172,65 @@ function ServicePicker({
 
 export default function AnalyticsPage() {
   const { applications, loading, error } = useApplications();
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [selectedProject, setSelectedProject] = useState<string | undefined>(undefined);
+  const [selectedServiceId, setSelectedServiceId] = useState<string | undefined>(undefined);
 
-  const stats = useMemo(
-    () =>
-      [...applications]
-        .map(buildStat)
-        .sort((a, b) => b.scanCount - a.scanCount || a.app.name.localeCompare(b.app.name)),
-    [applications],
-  );
+  // Group services by their project prefix, ordered by scan volume.
+  const projects: ProjectGroup[] = useMemo(() => {
+    const map = new Map<string, Application[]>();
+    for (const app of applications) {
+      const p = projectOf(app.name);
+      (map.get(p) ?? map.set(p, []).get(p)!).push(app);
+    }
+    return Array.from(map.entries())
+      .map(([project, apps]) => {
+        const sortedApps = [...apps].sort(
+          (a, b) => scanCountOf(b) - scanCountOf(a) || a.name.localeCompare(b.name),
+        );
+        return {
+          project,
+          apps: sortedApps,
+          totalScans: sortedApps.reduce((n, a) => n + scanCountOf(a), 0),
+        };
+      })
+      .sort((a, b) => b.totalScans - a.totalScans || a.project.localeCompare(b.project));
+  }, [applications]);
 
-  // Default to the most-scanned service once data arrives.
+  // Keep a valid project selected.
   useEffect(() => {
-    if (!selectedId && stats.length > 0) setSelectedId(stats[0].app.id);
-  }, [stats, selectedId]);
+    if (projects.length === 0) return;
+    if (!selectedProject || !projects.some((p) => p.project === selectedProject)) {
+      setSelectedProject(projects[0].project);
+    }
+  }, [projects, selectedProject]);
 
-  const selected = applications.find((a) => a.id === selectedId);
-  const selectedStat = stats.find((s) => s.app.id === selectedId);
+  const activeGroup = projects.find((p) => p.project === selectedProject);
 
-  // Trend per build (image tag), chronological. Each point aggregates all
-  // scanner runs on that build: total findings and mitigated.
+  // When the project changes, default the service to the first one in it.
+  useEffect(() => {
+    if (!activeGroup) return;
+    if (!selectedServiceId || !activeGroup.apps.some((a) => a.id === selectedServiceId)) {
+      setSelectedServiceId(activeGroup.apps[0]?.id);
+    }
+  }, [activeGroup, selectedServiceId]);
+
+  const selected = applications.find((a) => a.id === selectedServiceId);
+
+  const projectItems: ComboItem[] = projects.map((p) => ({
+    value: p.project,
+    label: <span className="font-medium">{p.project}</span>,
+    keywords: p.project.toLowerCase(),
+    hint: `${p.apps.length} service${p.apps.length !== 1 ? "s" : ""}`,
+  }));
+
+  const serviceItems: ComboItem[] = (activeGroup?.apps ?? []).map((a) => ({
+    value: a.id,
+    label: <span className="font-medium">{serviceOf(a.name)}</span>,
+    keywords: a.name.toLowerCase(),
+    hint: `${scanCountOf(a)} scan${scanCountOf(a) !== 1 ? "s" : ""}`,
+  }));
+
+  // Trend per build (image tag), chronological — total findings vs mitigated.
   const trend = useMemo(() => {
     if (!selected) return [];
     return [...selected.imageTags]
@@ -239,6 +242,11 @@ export default function AnalyticsPage() {
       }));
   }, [selected]);
 
+  const scanCount = selected ? scanCountOf(selected) : 0;
+  const builds = selected ? selected.imageTags.length : 0;
+  const latestTotal = trend.length ? trend[trend.length - 1].Findings : 0;
+  const latestMitigated = trend.length ? trend[trend.length - 1].Mitigated : 0;
+
   return (
     <div>
       <Header
@@ -247,21 +255,38 @@ export default function AnalyticsPage() {
       />
 
       <div className="p-6 space-y-6">
-        {/* App/service selector */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-700">Service</p>
-            <p className="text-xs text-slate-400">
-              Pick a service to see how its findings change build over build.
-            </p>
+        {/* Cascading selectors: App → Service */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-500">Application</label>
+            <Combobox
+              items={projectItems}
+              value={selectedProject}
+              onChange={(v) => {
+                setSelectedProject(v);
+                setSelectedServiceId(undefined); // reset; effect picks the first service
+              }}
+              placeholder="Select an application…"
+              searchPlaceholder="Search application…"
+            />
           </div>
-          <ServicePicker apps={stats.map((s) => s.app)} value={selectedId} onChange={setSelectedId} />
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-500">Service</label>
+            <Combobox
+              items={serviceItems}
+              value={selectedServiceId}
+              onChange={setSelectedServiceId}
+              placeholder="Select a service…"
+              searchPlaceholder="Search service…"
+              disabled={!activeGroup}
+            />
+          </div>
         </div>
 
         {loading && <p className="text-sm text-slate-400">Loading analytics…</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        {!loading && stats.length === 0 && (
+        {!loading && projects.length === 0 && (
           <Card className="border-0 shadow-sm">
             <CardContent className="p-10 text-center text-sm text-slate-400">
               No applications yet. Import a scan to see analytics.
@@ -269,34 +294,14 @@ export default function AnalyticsPage() {
           </Card>
         )}
 
-        {selectedStat && (
+        {selected && (
           <>
             {/* KPI tiles */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatTile
-                icon={ScanLine}
-                label="Total scans"
-                value={selectedStat.scanCount}
-                accent="bg-indigo-50 text-indigo-600"
-              />
-              <StatTile
-                icon={Layers}
-                label="Builds (image tags)"
-                value={selectedStat.builds}
-                accent="bg-slate-100 text-slate-600"
-              />
-              <StatTile
-                icon={Bug}
-                label="Findings (latest build)"
-                value={selectedStat.latestTotal}
-                accent="bg-rose-50 text-rose-600"
-              />
-              <StatTile
-                icon={ShieldCheck}
-                label="Mitigated (latest build)"
-                value={selectedStat.latestMitigated}
-                accent="bg-teal-50 text-teal-600"
-              />
+              <StatTile icon={ScanLine} label="Total scans" value={scanCount} accent="bg-indigo-50 text-indigo-600" />
+              <StatTile icon={Layers} label="Builds (image tags)" value={builds} accent="bg-slate-100 text-slate-600" />
+              <StatTile icon={Bug} label="Findings (latest build)" value={latestTotal} accent="bg-rose-50 text-rose-600" />
+              <StatTile icon={ShieldCheck} label="Mitigated (latest build)" value={latestMitigated} accent="bg-teal-50 text-teal-600" />
             </div>
 
             {/* Trend chart (template — re-renders for the selected service) */}
@@ -304,7 +309,7 @@ export default function AnalyticsPage() {
               <CardHeader className="pb-2 px-5 pt-5">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <TrendingDown className="h-4 w-4 text-slate-400" />
-                  Findings vs Mitigated — {selectedStat.service}
+                  Findings vs Mitigated — {selectedProject}/{serviceOf(selected.name)}
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 pb-5">
@@ -316,18 +321,8 @@ export default function AnalyticsPage() {
                   <ResponsiveContainer width="100%" height={300}>
                     <LineChart data={trend} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis
-                        dataKey="build"
-                        tick={{ fontSize: 12, fill: "#94a3b8" }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        allowDecimals={false}
-                        tick={{ fontSize: 12, fill: "#94a3b8" }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
+                      <XAxis dataKey="build" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                       <Tooltip
                         contentStyle={{
                           fontSize: 12,
@@ -337,22 +332,8 @@ export default function AnalyticsPage() {
                         }}
                       />
                       <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                      <Line
-                        type="monotone"
-                        dataKey="Findings"
-                        stroke={COLOR_FINDINGS}
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                        activeDot={{ r: 5 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="Mitigated"
-                        stroke={COLOR_MITIGATED}
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                        activeDot={{ r: 5 }}
-                      />
+                      <Line type="monotone" dataKey="Findings" stroke={COLOR_FINDINGS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                      <Line type="monotone" dataKey="Mitigated" stroke={COLOR_MITIGATED} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
@@ -361,12 +342,12 @@ export default function AnalyticsPage() {
           </>
         )}
 
-        {/* Per-service scan coverage */}
-        {stats.length > 0 && (
+        {/* Per-service scan coverage for the selected application */}
+        {activeGroup && (
           <Card className="border-0 shadow-sm">
             <CardHeader className="pb-2 px-5 pt-5">
               <CardTitle className="text-sm font-semibold text-slate-700">
-                Scan coverage by service
+                Scan coverage — {activeGroup.project}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -377,33 +358,24 @@ export default function AnalyticsPage() {
                       <th className="px-5 py-2.5 font-medium">Service</th>
                       <th className="px-5 py-2.5 font-medium text-right">Scans</th>
                       <th className="px-5 py-2.5 font-medium text-right">Builds</th>
-                      <th className="px-5 py-2.5 font-medium text-right">Findings</th>
-                      <th className="px-5 py-2.5 font-medium text-right">Mitigated</th>
                       <th className="px-5 py-2.5 font-medium">Last scanned</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {stats.map((s) => {
-                      const active = s.app.id === selectedId;
+                    {activeGroup.apps.map((a) => {
+                      const active = a.id === selectedServiceId;
                       return (
                         <tr
-                          key={s.app.id}
-                          onClick={() => setSelectedId(s.app.id)}
+                          key={a.id}
+                          onClick={() => setSelectedServiceId(a.id)}
                           className={`border-b border-slate-50 cursor-pointer transition-colors ${
                             active ? "bg-indigo-50/60" : "hover:bg-slate-50"
                           }`}
                         >
-                          <td className="px-5 py-3">
-                            {s.project && <span className="text-slate-400">{s.project}/</span>}
-                            <span className="font-medium text-slate-800">{s.service}</span>
-                          </td>
-                          <td className="px-5 py-3 text-right font-semibold text-slate-800">
-                            {s.scanCount}
-                          </td>
-                          <td className="px-5 py-3 text-right text-slate-600">{s.builds}</td>
-                          <td className="px-5 py-3 text-right text-slate-600">{s.latestTotal}</td>
-                          <td className="px-5 py-3 text-right text-teal-700">{s.latestMitigated}</td>
-                          <td className="px-5 py-3 text-slate-500">{fmtDate(s.lastScanned)}</td>
+                          <td className="px-5 py-3 font-medium text-slate-800">{serviceOf(a.name)}</td>
+                          <td className="px-5 py-3 text-right font-semibold text-slate-800">{scanCountOf(a)}</td>
+                          <td className="px-5 py-3 text-right text-slate-600">{a.imageTags.length}</td>
+                          <td className="px-5 py-3 text-slate-500">{fmtDate(a.lastScanned ?? null)}</td>
                         </tr>
                       );
                     })}
