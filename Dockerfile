@@ -16,31 +16,17 @@ RUN npm run build
 
 
 # ─────────────────────────────────────────────
-# Stage 2: Node runtime source
-# Provides the glibc `node` binary for the final image without pulling from
-# Debian APT / NodeSource repositories (this build has network access only to
-# the Docker Hub base images, the npm registry and PyPI). Kept on the same
-# Debian release as the final base so the copied binary is ABI-compatible.
-# ─────────────────────────────────────────────
-FROM node:22-trixie-slim AS node-runtime
-
-
-# ─────────────────────────────────────────────
-# Stage 3: Final image — Python + Node + supervisord
+# Stage 2: Final image — Python + Node + supervisord
 # ─────────────────────────────────────────────
 FROM python:3.12-slim
 
-# Node.js runtime: copy just the `node` binary from the official Node image.
-# The Next.js standalone server runs via `node server.js`, so npm/npx are not
-# needed at runtime.
-COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-
-# supervisord from PyPI (the Debian package is unreachable in this build).
-# entrypoint.sh calls /usr/bin/supervisord, so link it to the pip location.
-# setuptools provides pkg_resources, which supervisor imports but python:3.12
-# no longer ships by default. Pin <81: setuptools 81 dropped pkg_resources.
-RUN pip install --no-cache-dir supervisor==4.2.5 'setuptools<81' \
-    && ln -sf /usr/local/bin/supervisord /usr/bin/supervisord
+# System deps: Node.js + supervisord
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        supervisor \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Python backend ──────────────────────────
 WORKDIR /app/backend
@@ -75,6 +61,6 @@ USER root
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3000/api/health', timeout=5).status == 200 else 1)" || exit 1
+    CMD curl -f http://localhost:3000/api/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
