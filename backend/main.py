@@ -1276,6 +1276,7 @@ def import_scan(
     scanner: Optional[str] = Form(None),
     app_type: str = Form("service"),
     team: str = Form(""),
+    build_id: Optional[str] = Form(None),
     background: BackgroundTasks = None,
     db: Session = Depends(get_db),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -1305,6 +1306,7 @@ def import_scan(
         scan_type_override=None,
         app_type=app_type,
         team=team,
+        build_id=(build_id.strip() if build_id and build_id.strip() else None),
     )
     via = "via API" if identity.startswith("apikey:") else "via UI"
     record_activity(

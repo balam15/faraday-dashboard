@@ -57,7 +57,15 @@ fi
 
 APP_NAME="${PROJECT}/${SERVICE_NAME}"
 
-log "Upload ${TEST_TITLE} -> ${DASHBOARD_URL} (app=${APP_NAME} tag=${IMAGE_TAG} type=${SCAN_TYPE})"
+# All scanner reports of ONE CI build share a build id so the Analytics trend
+# shows a single point per build (not one per report). Jenkins sets BUILD_TAG
+# (globally unique); fall back to BUILD_NUMBER, then a per-day bucket.
+BUILD_ID="${BUILD_ID_OVERRIDE:-${BUILD_TAG:-${BUILD_NUMBER:-}}}"
+if [ -z "${BUILD_ID}" ]; then
+  BUILD_ID="${SERVICE_NAME}-${IMAGE_TAG}-$(date +%Y%m%d)"
+fi
+
+log "Upload ${TEST_TITLE} -> ${DASHBOARD_URL} (app=${APP_NAME} tag=${IMAGE_TAG} type=${SCAN_TYPE} build=${BUILD_ID})"
 
 RESPONSE_FILE="$(mktemp)"
 HTTP_CODE="$(
@@ -71,6 +79,7 @@ HTTP_CODE="$(
     -F "tag=${IMAGE_TAG}" \
     -F "scan_type=${SCAN_TYPE}" \
     -F "team=${PROJECT}" \
+    -F "build_id=${BUILD_ID}" \
     -o "${RESPONSE_FILE}"
 )" || HTTP_CODE="000"
 
