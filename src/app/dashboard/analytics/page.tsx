@@ -27,7 +27,7 @@ import {
 
 // Two-series categorical palette, validated for the light chart surface with
 // the dataviz validator (CVD ΔE 22.1 / normal ΔE 27.1 — both pass).
-const COLOR_FINDINGS = "#4f46e5"; // total findings
+const COLOR_OPEN = "#e11d48"; // open / active findings — the number to drive to 0
 const COLOR_MITIGATED = "#0d9488"; // mitigated / resolved
 
 // "nexus/sample-api" → project "nexus", service "sample-api".
@@ -277,7 +277,7 @@ export default function AnalyticsPage() {
     () =>
       snapshots.map((p, i) => ({
         point: fmtTime(p.importedAt) || `#${i + 1}`,
-        Findings: p.total,
+        Open: p.open,
         Mitigated: p.mitigated,
       })),
     [snapshots],
@@ -285,7 +285,7 @@ export default function AnalyticsPage() {
 
   const scanCount = selected ? scanCountOf(selected) : 0;
   const builds = selected ? selected.imageTags.length : 0;
-  const latestTotal = trend.length ? trend[trend.length - 1].Findings : 0;
+  const latestOpen = trend.length ? trend[trend.length - 1].Open : 0;
   const latestMitigated = trend.length ? trend[trend.length - 1].Mitigated : 0;
 
   return (
@@ -355,7 +355,7 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatTile icon={ScanLine} label="Total scans" value={scanCount} accent="bg-indigo-50 text-indigo-600" />
               <StatTile icon={Layers} label="Builds (image tags)" value={builds} accent="bg-slate-100 text-slate-600" />
-              <StatTile icon={Bug} label="Findings (latest import)" value={latestTotal} accent="bg-rose-50 text-rose-600" />
+              <StatTile icon={Bug} label="Open findings (latest)" value={latestOpen} accent="bg-rose-50 text-rose-600" />
               <StatTile icon={ShieldCheck} label="Mitigated (latest import)" value={latestMitigated} accent="bg-teal-50 text-teal-600" />
             </div>
 
@@ -364,7 +364,7 @@ export default function AnalyticsPage() {
               <CardHeader className="pb-2 px-5 pt-5">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                   <TrendingDown className="h-4 w-4 text-slate-400" />
-                  Findings vs Mitigated — {serviceOf(selected.name)}
+                  Open vs Mitigated — {serviceOf(selected.name)}
                   {selectedTag ? <span className="text-slate-400"> : {selectedTag.tag}</span> : null}
                 </CardTitle>
               </CardHeader>
@@ -400,7 +400,7 @@ export default function AnalyticsPage() {
                         }}
                       />
                       <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                      <Line type="monotone" dataKey="Findings" stroke={COLOR_FINDINGS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                      <Line type="monotone" dataKey="Open" stroke={COLOR_OPEN} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
                       <Line type="monotone" dataKey="Mitigated" stroke={COLOR_MITIGATED} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
                     </LineChart>
                   </ResponsiveContainer>
