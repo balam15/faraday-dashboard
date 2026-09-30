@@ -36,6 +36,10 @@ export interface ReportData {
     cve?: string;
     description: string;
     remediation?: string;
+    impact?: string | null;
+    stepsToReproduce?: string | null;
+    severityJustification?: string | null;
+    references?: string[];
     status: string;
     foundAt: string;
   }>;
@@ -759,6 +763,17 @@ function formatStatus(status: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Collapse the runs of blank lines scanner text often carries, so a finding's
+// boxes don't render tall vertical gaps in the PDF.
+function cleanText(s?: string | null): string {
+  if (!s) return '';
+  return s
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -1041,63 +1056,108 @@ function FindingBlock({
   finding: ReportData['findings'][0];
   isLast: boolean;
 }) {
+  const description = cleanText(finding.description);
+  const remediation = cleanText(finding.remediation);
+  const impact = cleanText(finding.impact);
+  const steps = cleanText(finding.stepsToReproduce);
+  const severityJustification = cleanText(finding.severityJustification);
+  const references = (finding.references ?? []).filter(Boolean);
+
   return (
-    <View style={styles.findingBlock} wrap={false}>
-      {/* Title */}
-      <Text style={styles.findingTitle}>{finding.title}</Text>
+    // No wrap={false}: a long finding must be allowed to flow across pages,
+    // otherwise it is clipped (content lost) and leaves a big gap on the
+    // previous page. minPresenceAhead keeps it from starting on a sliver.
+    <View style={styles.findingBlock} minPresenceAhead={80}>
+      {/* Identity header — kept together so the title never orphans. */}
+      <View wrap={false}>
+        <Text style={styles.findingTitle}>{finding.title}</Text>
 
-      {/* Badge row */}
-      <View style={styles.findingBadgeRow}>
-        <SeverityBadge severity={finding.severity} />
-        <StatusBadge status={finding.status} />
-        <ScannerBadge scanner={finding.scanner} />
-        <ScanTypeBadge scanType={finding.scanType} />
-      </View>
-
-      {/* Location */}
-      {finding.filePath ? (
-        <View style={styles.findingMetaRow}>
-          <Text style={styles.findingMetaLabel}>Location</Text>
-          <Text style={styles.findingMetaValueMono}>
-            {finding.filePath}
-            {finding.lineNumber ? ` : line ${finding.lineNumber}` : ''}
-          </Text>
+        <View style={styles.findingBadgeRow}>
+          <SeverityBadge severity={finding.severity} />
+          <StatusBadge status={finding.status} />
+          <ScannerBadge scanner={finding.scanner} />
+          <ScanTypeBadge scanType={finding.scanType} />
         </View>
-      ) : null}
 
-      {/* CWE */}
-      {finding.cwe ? (
-        <View style={styles.findingMetaRow}>
-          <Text style={styles.findingMetaLabel}>CWE</Text>
-          <Text style={styles.findingMetaValue}>{finding.cwe}</Text>
+        {finding.filePath ? (
+          <View style={styles.findingMetaRow}>
+            <Text style={styles.findingMetaLabel}>Location</Text>
+            <Text style={styles.findingMetaValueMono}>
+              {finding.filePath}
+              {finding.lineNumber ? ` : line ${finding.lineNumber}` : ''}
+            </Text>
+          </View>
+        ) : null}
+
+        {finding.cwe ? (
+          <View style={styles.findingMetaRow}>
+            <Text style={styles.findingMetaLabel}>CWE</Text>
+            <Text style={styles.findingMetaValue}>{finding.cwe}</Text>
+          </View>
+        ) : null}
+
+        {finding.cve ? (
+          <View style={styles.findingMetaRow}>
+            <Text style={styles.findingMetaLabel}>CVE</Text>
+            <Text style={styles.findingMetaValue}>{finding.cve}</Text>
+          </View>
+        ) : null}
+
+        <View style={[styles.findingMetaRow, { marginBottom: 10 }]}>
+          <Text style={styles.findingMetaLabel}>Found At</Text>
+          <Text style={styles.findingMetaValue}>{formatDateTime(finding.foundAt)}</Text>
         </View>
-      ) : null}
-
-      {/* CVE */}
-      {finding.cve ? (
-        <View style={styles.findingMetaRow}>
-          <Text style={styles.findingMetaLabel}>CVE</Text>
-          <Text style={styles.findingMetaValue}>{finding.cve}</Text>
-        </View>
-      ) : null}
-
-      {/* Date found */}
-      <View style={[styles.findingMetaRow, { marginBottom: 10 }]}>
-        <Text style={styles.findingMetaLabel}>Found At</Text>
-        <Text style={styles.findingMetaValue}>{formatDateTime(finding.foundAt)}</Text>
       </View>
 
       {/* Description */}
-      <View style={styles.findingDescriptionBox}>
-        <Text style={styles.findingDescriptionLabel}>Description</Text>
-        <Text style={styles.findingDescriptionText}>{finding.description}</Text>
-      </View>
+      {description ? (
+        <View style={styles.findingDescriptionBox}>
+          <Text style={styles.findingDescriptionLabel}>Description</Text>
+          <Text style={styles.findingDescriptionText}>{description}</Text>
+        </View>
+      ) : null}
 
       {/* Remediation */}
-      {finding.remediation ? (
+      {remediation ? (
         <View style={styles.findingRemediationBox}>
           <Text style={styles.findingRemediationLabel}>Remediation</Text>
-          <Text style={styles.findingRemediationText}>{finding.remediation}</Text>
+          <Text style={styles.findingRemediationText}>{remediation}</Text>
+        </View>
+      ) : null}
+
+      {/* Impact */}
+      {impact ? (
+        <View style={styles.findingDescriptionBox}>
+          <Text style={styles.findingDescriptionLabel}>Impact</Text>
+          <Text style={styles.findingDescriptionText}>{impact}</Text>
+        </View>
+      ) : null}
+
+      {/* Steps To Reproduce */}
+      {steps ? (
+        <View style={styles.findingDescriptionBox}>
+          <Text style={styles.findingDescriptionLabel}>Steps To Reproduce</Text>
+          <Text style={styles.findingDescriptionText}>{steps}</Text>
+        </View>
+      ) : null}
+
+      {/* Severity Justification */}
+      {severityJustification ? (
+        <View style={styles.findingDescriptionBox}>
+          <Text style={styles.findingDescriptionLabel}>Severity Justification</Text>
+          <Text style={styles.findingDescriptionText}>{severityJustification}</Text>
+        </View>
+      ) : null}
+
+      {/* References */}
+      {references.length > 0 ? (
+        <View style={styles.findingDescriptionBox}>
+          <Text style={styles.findingDescriptionLabel}>References</Text>
+          {references.map((ref, i) => (
+            <Text key={i} style={[styles.findingDescriptionText, { color: COLORS.lowText }]}>
+              {ref}
+            </Text>
+          ))}
         </View>
       ) : null}
 
