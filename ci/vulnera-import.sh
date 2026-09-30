@@ -57,12 +57,23 @@ fi
 
 APP_NAME="${PROJECT}/${SERVICE_NAME}"
 
-# All scanner reports of ONE CI build share a build id so the Analytics trend
-# shows a single point per build (not one per report). Jenkins sets BUILD_TAG
-# (globally unique); fall back to BUILD_NUMBER, then a per-day bucket.
-BUILD_ID="${BUILD_ID_OVERRIDE:-${BUILD_TAG:-${BUILD_NUMBER:-}}}"
+# All scanner reports of ONE build must share a build id so the Analytics
+# trend shows a single point per build (not one per report) — AND different
+# builds must get different ids, so rebuilding the same tag adds a new point
+# and its open/mitigated progress becomes visible.
+#
+# Priority (each value is stable across a build's scanners, unique per build):
+#   BUILD_ID_OVERRIDE  -> set once per pipeline run to force grouping
+#   BUILD_TAG          -> Jenkins, globally unique per build
+#   BUILD_NUMBER       -> Jenkins, unique per job
+#   GIT_COMMIT         -> Jenkins-provided commit of the code under test
+#   git rev-parse HEAD -> the checkout's commit (new code = new point)
+# If none resolve we send an EMPTY build id and the dashboard groups a build's
+# scanners by a short time window. We deliberately do NOT use a per-day bucket:
+# that collapsed every build on the same day into a single point.
+BUILD_ID="${BUILD_ID_OVERRIDE:-${BUILD_TAG:-${BUILD_NUMBER:-${GIT_COMMIT:-}}}}"
 if [ -z "${BUILD_ID}" ]; then
-  BUILD_ID="${SERVICE_NAME}-${IMAGE_TAG}-$(date +%Y%m%d)"
+  BUILD_ID="$(git -C "${WORK_DIR}" rev-parse --short=12 HEAD 2>/dev/null || true)"
 fi
 
 log "Upload ${TEST_TITLE} -> ${DASHBOARD_URL} (app=${APP_NAME} tag=${IMAGE_TAG} type=${SCAN_TYPE} build=${BUILD_ID})"
