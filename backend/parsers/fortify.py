@@ -6,6 +6,7 @@ namespaces so navigation stays readable.
 """
 from __future__ import annotations
 
+import html
 import io
 import re
 import zipfile
@@ -37,7 +38,20 @@ def _inner_text(el: Optional[ET.Element]) -> str:
     if el is None:
         return ""
     text = "".join(el.itertext())
-    return _TAG_RE.sub("", text).strip()
+    # Fortify FVDL stores its HTML descriptions escaped inside the XML. After
+    # ElementTree's own decode, real formatting tags (from single-escaped
+    # markup like "&lt;p&gt;") appear as tags and are stripped here. Code
+    # examples are double-escaped ("&amp;lt;project&amp;gt;") and survive as
+    # "&lt;project&gt;", so unescape once more to render them as readable
+    # "<project>" instead of leaking raw entities into the UI.
+    text = _TAG_RE.sub("", text)
+    text = html.unescape(text)
+    # Collapse the whitespace ElementTree leaves behind while keeping line
+    # breaks so multi-line recommendations/examples stay readable.
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _severity_from_float(value: Optional[str]) -> str:
