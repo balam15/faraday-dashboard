@@ -62,6 +62,29 @@ def _rule_text(rule: dict, key: str) -> str:
     return ""
 
 
+def _code_flow_steps(result: dict) -> Optional[str]:
+    """Reproduction path from SARIF codeFlows (taint/data-flow rules)."""
+    lines: List[str] = []
+    n = 0
+    for flow in (result.get("codeFlows") or []):
+        for tf in (flow.get("threadFlows") or []):
+            for loc in (tf.get("locations") or []):
+                location = loc.get("location") or {}
+                phys = location.get("physicalLocation") or {}
+                uri = (phys.get("artifactLocation") or {}).get("uri") or ""
+                ln = (phys.get("region") or {}).get("startLine")
+                msg = (location.get("message") or {}).get("text") or ""
+                where = f"{uri}:{ln}" if ln else uri
+                if not (where or msg):
+                    continue
+                n += 1
+                step = f"{n}. {where}".rstrip()
+                if msg:
+                    step += f" — {msg}"
+                lines.append(step)
+    return "\n".join(lines) or None
+
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _BLANKS_RE = re.compile(r"[ \t]*\n[ \t]*")
 
@@ -149,6 +172,17 @@ def parse(content: bytes) -> ParseResult:
                 elif "hadolint" in low_tool and rid.startswith("SC") and rid[2:].isdigit():
                     help_text = f"See rule documentation: https://www.shellcheck.net/wiki/{rid}"
 
+            # Severity justification: GitHub-style numeric security score.
+            props = rule.get("properties") or {}
+            sec = props.get("security-severity")
+            sev_just = f"Security severity score: {sec}" if sec is not None else None
+
+            # References: the rule's documentation link, when present.
+            references = []
+            help_uri = rule.get("helpUri")
+            if help_uri:
+                references.append(str(help_uri))
+
             findings.append(ParsedFinding(
                 title=title,
                 severity=_rule_severity(rule, result.get("level")),
@@ -157,7 +191,10 @@ def parse(content: bytes) -> ParseResult:
                 cwe=_rule_cwe(rule),
                 description=description,
                 remediation=help_text or None,
+                steps_to_reproduce=_code_flow_steps(result),
+                severity_justification=sev_just,
                 unique_id=f"sarif:{rule_id}:{file_path}:{line_number}" if rule_id else None,
+                references=references,
             ).normalized())
 
     return ParseResult(

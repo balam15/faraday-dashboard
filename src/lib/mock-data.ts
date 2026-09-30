@@ -25,6 +25,9 @@ export interface Finding {
   description: string;
   remediation?: string;
   references?: string[];
+  impact?: string | null;
+  stepsToReproduce?: string | null;
+  severityJustification?: string | null;
   status: "open" | "mitigated" | "false_positive" | "accepted";
   foundAt: string;
 }

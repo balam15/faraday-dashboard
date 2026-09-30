@@ -269,6 +269,40 @@ function FindingDetailBody({
             </div>
           )}
 
+          {/* Impact */}
+          {finding.impact && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1.5">Impact</p>
+              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                {finding.impact}
+              </p>
+            </div>
+          )}
+
+          {/* Steps To Reproduce */}
+          {finding.stepsToReproduce && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1.5">
+                Steps To Reproduce
+              </p>
+              <pre className="text-xs text-slate-700 bg-slate-50 rounded-lg p-3 whitespace-pre-wrap break-words font-mono">
+                {finding.stepsToReproduce}
+              </pre>
+            </div>
+          )}
+
+          {/* Severity Justification */}
+          {finding.severityJustification && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1.5">
+                Severity Justification
+              </p>
+              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                {finding.severityJustification}
+              </p>
+            </div>
+          )}
+
           {/* References */}
           {finding.references && finding.references.length > 0 && (
             <div>

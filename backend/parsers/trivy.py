@@ -43,6 +43,27 @@ def _cvss_score(vuln: dict):
     return None
 
 
+def _cvss_justification(vuln: dict):
+    """A human-readable CVSS line (score + vector + vendor) to justify severity."""
+    cvss = vuln.get("CVSS") or {}
+    for vendor in ("nvd", "redhat"):
+        node = cvss.get(vendor)
+        if isinstance(node, dict):
+            score = node.get("V3Score") or node.get("V2Score")
+            vector = node.get("V3Vector") or node.get("V2Vector")
+            if score is not None:
+                line = f"CVSS {score} ({vendor.upper()})"
+                return f"{line} — {vector}" if vector else line
+    for name, node in cvss.items():
+        if isinstance(node, dict):
+            score = node.get("V3Score") or node.get("V2Score")
+            vector = node.get("V3Vector") or node.get("V2Vector")
+            if score is not None:
+                line = f"CVSS {score} ({name})"
+                return f"{line} — {vector}" if vector else line
+    return None
+
+
 def _parse_vulnerability(vuln: dict, target: str) -> ParsedFinding:
     vuln_id = vuln.get("VulnerabilityID", "")
     pkg = vuln.get("PkgName", "")
@@ -84,6 +105,7 @@ def _parse_vulnerability(vuln: dict, target: str) -> ParsedFinding:
         cve=vuln_id if str(vuln_id).startswith("CVE-") else None,
         description="\n\n".join(desc_parts),
         remediation=remediation,
+        severity_justification=_cvss_justification(vuln),
         unique_id=f"{vuln_id}:{pkg}:{installed}:{target}",
         references=vuln.get("References", []) or [],
     )

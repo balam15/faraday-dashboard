@@ -112,6 +112,19 @@ def _priority_from_metainfo(inst_info: Optional[ET.Element]) -> Optional[str]:
     return None
 
 
+def _metainfo_group(inst_info: Optional[ET.Element], name: str) -> Optional[str]:
+    """Read a named MetaInfo Group (e.g. Impact, Probability, Accuracy)."""
+    if inst_info is None:
+        return None
+    meta = inst_info.find("MetaInfo")
+    if meta is None:
+        return None
+    for group in meta.findall("Group"):
+        if (group.attrib.get("name", "") or "").lower() == name.lower():
+            return (group.text or "").strip() or None
+    return None
+
+
 def _find_source_location(vuln: ET.Element):
     """Return (path, line) of the last (sink) SourceLocation, if any."""
     path = line = None
@@ -162,6 +175,18 @@ def parse(content: bytes) -> ParseResult:
 
         instance_id = _inner_text(inst_info.find("InstanceID")) if inst_info is not None else None
 
+        # Impact + severity justification from Fortify's instance metadata.
+        impact = _metainfo_group(inst_info, "Impact")
+        conf = _inner_text(inst_info.find("Confidence")) if inst_info is not None else ""
+        just_bits = []
+        if conf:
+            just_bits.append(f"Confidence: {conf}")
+        for g in ("Probability", "Accuracy"):
+            v = _metainfo_group(inst_info, g)
+            if v:
+                just_bits.append(f"{g}: {v}")
+        severity_justification = " · ".join(just_bits) or None
+
         findings.append(ParsedFinding(
             title=title,
             severity=severity,
@@ -170,6 +195,8 @@ def parse(content: bytes) -> ParseResult:
             cwe=cwe,
             description=description,
             remediation=remediation,
+            impact=impact,
+            severity_justification=severity_justification,
             unique_id=f"fortify:{instance_id}" if instance_id else f"fortify:{class_id}:{path}:{line}",
         ).normalized())
 

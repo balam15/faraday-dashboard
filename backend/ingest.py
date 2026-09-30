@@ -178,6 +178,8 @@ def persist_scan(
             "line_number": f.line_number, "cwe": f.cwe, "cve": f.cve,
             "description": f.description, "remediation": f.remediation,
             "references": f.references,
+            "impact": f.impact, "steps_to_reproduce": f.steps_to_reproduce,
+            "severity_justification": f.severity_justification,
             "status": f.status, "found_at": f.found_at,
         }
     is_reimport = len(prior_findings) > 0
@@ -229,6 +231,9 @@ def persist_scan(
             description=pf.description or "",
             remediation=pf.remediation,
             references=json.dumps(pf.references) if pf.references else None,
+            impact=pf.impact,
+            steps_to_reproduce=pf.steps_to_reproduce,
+            severity_justification=pf.severity_justification,
             status=status,
             found_at=now,
             dedup_hash=h,
@@ -254,6 +259,9 @@ def persist_scan(
                 description=prev["description"] or "",
                 remediation=prev["remediation"],
                 references=prev["references"],
+                impact=prev["impact"],
+                steps_to_reproduce=prev["steps_to_reproduce"],
+                severity_justification=prev["severity_justification"],
                 status=status,
                 found_at=prev["found_at"] or now,
                 dedup_hash=h,

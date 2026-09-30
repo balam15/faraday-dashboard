@@ -210,6 +210,11 @@ class Finding(Base):
     # Reference URLs the scanner supplied, stored as a JSON array string.
     # DB column is "reference_urls" ("references" is a SQL reserved word).
     references  = Column("reference_urls", Text, nullable=True)
+    # Richer optional detail sections, populated only when a scanner supplies
+    # them (Semgrep impact, ZAP instances, CVSS/confidence, SARIF codeFlows).
+    impact                 = Column(Text, nullable=True)
+    steps_to_reproduce     = Column(Text, nullable=True)
+    severity_justification = Column(Text, nullable=True)
     # "open" | "mitigated" | "false_positive" | "accepted"
     status      = Column(String(24), nullable=False, default="open", index=True)
     found_at    = Column(DateTime, default=datetime.utcnow)

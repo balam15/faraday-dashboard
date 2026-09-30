@@ -70,6 +70,16 @@ def parse(content: bytes) -> ParseResult:
             elif src:
                 fix = f"See rule: {src}"
 
+        # Semgrep security rules often carry impact / likelihood / confidence.
+        impact = meta.get("impact")
+        impact = str(impact).strip() if impact else None
+        justification_bits = []
+        for key in ("confidence", "likelihood"):
+            val = meta.get(key)
+            if val:
+                justification_bits.append(f"{key.capitalize()}: {str(val).strip()}")
+        severity_justification = " · ".join(justification_bits) or None
+
         findings.append(ParsedFinding(
             title=title or "Semgrep finding",
             severity=_severity(extra.get("severity")),
@@ -79,6 +89,8 @@ def parse(content: bytes) -> ParseResult:
             cve=cve,
             description=str(message),
             remediation=(fix or None),
+            impact=impact,
+            severity_justification=severity_justification,
             unique_id=f"semgrep:{check_id}:{path}:{line}" if check_id else None,
             references=refs if isinstance(refs, list) else [],
         ).normalized())

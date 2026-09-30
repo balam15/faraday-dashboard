@@ -14,8 +14,11 @@ FORMAT = "XML"
 
 # ZAP riskcode → canonical severity
 _RISKCODE = {"0": "info", "1": "low", "2": "medium", "3": "high"}
+# ZAP confidence → label
+_CONFIDENCE = {"0": "False Positive", "1": "Low", "2": "Medium", "3": "High", "4": "Confirmed"}
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
 
 def _text(el: Optional[ET.Element], tag: str) -> str:
@@ -45,16 +48,42 @@ def parse(content: bytes) -> ParseResult:
         pluginid = _text(alertitem, "pluginid")
         desc = _strip_html(_text(alertitem, "desc"))
         solution = _strip_html(_text(alertitem, "solution"))
+        otherinfo = _strip_html(_text(alertitem, "otherinfo"))
+        confidence = _text(alertitem, "confidence")
 
-        # First affected URL, if present.
+        # References: the <reference> block is HTML holding one or more URLs.
+        references = _URL_RE.findall(_text(alertitem, "reference") or "")
+
+        # First affected URL + reproduction steps from each instance.
         uri = None
+        steps_lines: List[str] = []
         instances = alertitem.find("instances")
         if instances is not None:
-            first = instances.find("instance")
-            if first is not None:
-                uri = _text(first, "uri") or None
+            for inst in instances.findall("instance"):
+                inst_uri = _text(inst, "uri") or None
+                if uri is None:
+                    uri = inst_uri
+                method = _text(inst, "method")
+                param = _text(inst, "param")
+                attack = _text(inst, "attack")
+                evidence = _text(inst, "evidence")
+                parts = []
+                if method or inst_uri:
+                    parts.append(f"{method} {inst_uri}".strip())
+                if param:
+                    parts.append(f"Parameter: {param}")
+                if attack:
+                    parts.append(f"Attack: {attack}")
+                if evidence:
+                    parts.append(f"Evidence: {evidence}")
+                if parts:
+                    steps_lines.append("\n".join(parts))
         if uri is None:
             uri = _text(alertitem, "uri") or None
+
+        steps = "\n\n".join(steps_lines) or None
+        conf_label = _CONFIDENCE.get(confidence)
+        severity_justification = f"Confidence: {conf_label}" if conf_label else None
 
         findings.append(ParsedFinding(
             title=name or "ZAP alert",
@@ -63,7 +92,11 @@ def parse(content: bytes) -> ParseResult:
             cwe=normalize_cwe(cweid) if cweid and cweid != "-1" else None,
             description=desc,
             remediation=solution or None,
+            impact=otherinfo or None,
+            steps_to_reproduce=steps,
+            severity_justification=severity_justification,
             unique_id=f"zap:{pluginid}:{uri}" if pluginid else None,
+            references=references,
         ).normalized())
 
     return ParseResult(

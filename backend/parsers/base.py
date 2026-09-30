@@ -90,6 +90,11 @@ class ParsedFinding:
     cve: Optional[str] = None
     description: str = ""
     remediation: Optional[str] = None
+    # Optional richer detail sections. Populated only when the scanner supplies
+    # the data; the UI hides any that stay empty.
+    impact: Optional[str] = None
+    steps_to_reproduce: Optional[str] = None
+    severity_justification: Optional[str] = None
     # The scanner's own stable id for this finding, if it exposes one
     # (e.g. a CVE, a ZAP pluginid, a SARIF ruleId). Strengthens dedup.
     unique_id: Optional[str] = None

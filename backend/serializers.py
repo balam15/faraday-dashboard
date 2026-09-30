@@ -52,6 +52,9 @@ def finding_dict(f: Finding) -> dict:
         "description": f.description or "",
         "remediation": f.remediation,
         "references": _load_references(f.references),
+        "impact": f.impact,
+        "stepsToReproduce": f.steps_to_reproduce,
+        "severityJustification": f.severity_justification,
         "status": f.status,
         "foundAt": iso(f.found_at),
     }
