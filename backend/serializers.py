@@ -6,6 +6,7 @@ its per-app diagrams — render unchanged.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -26,6 +27,17 @@ def iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.replace(microsecond=0).isoformat() + "Z"
 
 
+def _load_references(raw) -> list:
+    """References are stored as a JSON array string; tolerate legacy/blank rows."""
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return [str(u) for u in val if u] if isinstance(val, list) else []
+
+
 def finding_dict(f: Finding) -> dict:
     return {
         "id": f.id,
@@ -39,6 +51,7 @@ def finding_dict(f: Finding) -> dict:
         "cve": f.cve,
         "description": f.description or "",
         "remediation": f.remediation,
+        "references": _load_references(f.references),
         "status": f.status,
         "foundAt": iso(f.found_at),
     }

@@ -248,14 +248,16 @@ function FindingDetailBody({
           )}
 
           {/* Description */}
-          <div>
-            <p className="text-xs font-medium text-slate-500 mb-1.5">
-              Description
-            </p>
-            <p className="text-sm text-slate-700 leading-relaxed">
-              {finding.description}
-            </p>
-          </div>
+          {finding.description && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1.5">
+                Description
+              </p>
+              <p className="text-sm text-slate-700 leading-relaxed">
+                {finding.description}
+              </p>
+            </div>
+          )}
 
           {/* Remediation */}
           {finding.remediation && (
@@ -263,7 +265,31 @@ function FindingDetailBody({
               <p className="text-xs font-medium text-green-700 mb-1">
                 Remediation
               </p>
-              <p className="text-sm text-green-800">{finding.remediation}</p>
+              <p className="text-sm text-green-800 whitespace-pre-line">{finding.remediation}</p>
+            </div>
+          )}
+
+          {/* References */}
+          {finding.references && finding.references.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1.5">
+                References
+              </p>
+              <ul className="space-y-1">
+                {finding.references.map((ref) => (
+                  <li key={ref}>
+                    <a
+                      href={ref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline break-all"
+                    >
+                      <span className="break-all">{ref}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

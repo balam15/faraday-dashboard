@@ -7,6 +7,7 @@ run of the same scanner so re-scans don't reset a human decision.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
@@ -176,6 +177,7 @@ def persist_scan(
             "title": f.title, "severity": f.severity, "file_path": f.file_path,
             "line_number": f.line_number, "cwe": f.cwe, "cve": f.cve,
             "description": f.description, "remediation": f.remediation,
+            "references": f.references,
             "status": f.status, "found_at": f.found_at,
         }
     is_reimport = len(prior_findings) > 0
@@ -226,6 +228,7 @@ def persist_scan(
             cve=pf.cve,
             description=pf.description or "",
             remediation=pf.remediation,
+            references=json.dumps(pf.references) if pf.references else None,
             status=status,
             found_at=now,
             dedup_hash=h,
@@ -250,6 +253,7 @@ def persist_scan(
                 cve=prev["cve"],
                 description=prev["description"] or "",
                 remediation=prev["remediation"],
+                references=prev["references"],
                 status=status,
                 found_at=prev["found_at"] or now,
                 dedup_hash=h,

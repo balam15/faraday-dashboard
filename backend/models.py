@@ -207,6 +207,9 @@ class Finding(Base):
     cve         = Column(String(64), nullable=True)
     description = Column(Text, nullable=True, default="")
     remediation = Column(Text, nullable=True)
+    # Reference URLs the scanner supplied, stored as a JSON array string.
+    # DB column is "reference_urls" ("references" is a SQL reserved word).
+    references  = Column("reference_urls", Text, nullable=True)
     # "open" | "mitigated" | "false_positive" | "accepted"
     status      = Column(String(24), nullable=False, default="open", index=True)
     found_at    = Column(DateTime, default=datetime.utcnow)

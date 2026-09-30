@@ -24,6 +24,7 @@ export interface Finding {
   cve?: string;
   description: string;
   remediation?: string;
+  references?: string[];
   status: "open" | "mitigated" | "false_positive" | "accepted";
   foundAt: string;
 }
